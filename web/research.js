@@ -40,11 +40,46 @@ export function secondFriday(released) {
   return date.toISOString().slice(0, 10);
 }
 
-export function assess(snapshot, policy, asOf) {
+export function sourceStatus(policy, at = new Date()) {
+  const verification = policy.verification;
+  if (!verification)
+    return {
+      status: 'unverified',
+      message: 'Legacy policy: sync sources to verify current legality.',
+    };
+  const fresh =
+    at.getTime() >= Date.parse(verification.checked_at) &&
+    at.getTime() <= Date.parse(verification.valid_until);
+  return {
+    status: fresh ? 'fresh' : 'stale',
+    checked_at: verification.checked_at,
+    valid_until: verification.valid_until,
+    message: fresh
+      ? 'Official Standard table and expansion coverage checked.'
+      : 'Source verification expired. Current legality needs a successful automatic refresh.',
+  };
+}
+
+export function policyWindow(policy, asOf, at = new Date()) {
+  if (asOf < policy.effective_from || asOf > policy.reviewed_through) return false;
+  if (!policy.verification) return true;
+  const day = at.toISOString().slice(0, 10);
+  if (asOf > day) return false;
+  return asOf === day
+    ? sourceStatus(policy, at).status === 'fresh'
+    : asOf <= policy.verification.checked_at.slice(0, 10);
+}
+
+export function assess(snapshot, policy, asOf, at = new Date()) {
   const sets = new Map(snapshot.sets.map((set) => [set.id, set]));
-  const within = asOf >= policy.effective_from && asOf <= policy.reviewed_through;
+  const within = policyWindow(policy, asOf, at);
   const direct = (card) => {
-    if (!within) return result('review', 'Date is outside the reviewed policy window.', asOf);
+    if (!within)
+      return result(
+        'review',
+        'Date is outside the verified policy window or sources are stale.',
+        asOf,
+      );
     if (card.legalities?.standard === 'Banned')
       return result('illegal', 'Source explicitly marks this printing banned.', asOf);
     if (!policy.legal_marks.includes(card.regulationMark))

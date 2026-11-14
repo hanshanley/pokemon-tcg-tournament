@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '17 6 * * *'
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -65,3 +65,53 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/deploy-pages@v5
         id: deployment
+
+  record-status:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PUBLISHER: ${{ github.repository_owner }}
+      PUBLISHER_ID: ${{ github.repository_owner_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tournament-pages-preview
+          path: verified-site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Record verified source status at most weekly
+        run: |
+          node --input-type=module <<'JS'
+          import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+          import { gunzipSync } from 'node:zlib';
+          const path = '.github/current-format.json';
+          const previous = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+          if (!previous || Date.now() - Date.parse(previous.recorded_at) >= 7 * 86400000) {
+            const root = 'verified-site/data/';
+            const manifest = JSON.parse(readFileSync(root + 'manifest.json', 'utf8'));
+            const snapshot = JSON.parse(gunzipSync(readFileSync(root + manifest.catalog)));
+            const policy = snapshot.policy;
+            const status = {
+              recorded_at: new Date().toISOString(),
+              source_commit: snapshot.source_commit,
+              card_count: snapshot.card_count,
+              policy_id: policy.id,
+              legal_marks: policy.legal_marks.join(' '),
+              verified_at: policy.verification.checked_at,
+              valid_until: policy.verification.valid_until,
+              handbook_sha256: policy.verification.handbook_sha256,
+            };
+            writeFileSync(path, JSON.stringify(status, null, 2) + '\n');
+          }
+          JS
+          git add .github/current-format.json
+          if git diff --cached --quiet -- .github/current-format.json; then exit 0; fi
+          git config user.name "$PUBLISHER"
+          git config user.email "$PUBLISHER_ID+$PUBLISHER@users.noreply.github.com"
+          git commit -m "Record verified current Standard sources [skip ci]"
+          git push origin HEAD:main

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from tournament.battles import Battles
 from tournament.decks import validate_deck
 from tournament.experiments import run_experiment
-from tournament.policy import POLICY
+from tournament.policy import source_status
 from tournament.service import Service
 from tournament.store import Store
 
@@ -80,7 +80,14 @@ def create_app(data_dir=None):
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "today": str(date.today()), "policy": POLICY}
+        policy = app.state.service.policy()
+        return {
+            "status": "ok",
+            "today": str(date.today()),
+            "default_as_of": str(date.today()),
+            "policy": policy,
+            "source_status": source_status(policy),
+        }
 
     @app.get("/api/overview")
     def overview(as_of: AsOf):
@@ -93,7 +100,8 @@ def create_app(data_dir=None):
         return {
             "today": str(date.today()),
             "as_of": str(as_of),
-            "policy": POLICY,
+            "policy": app.state.service.policy(),
+            "source_status": source_status(app.state.service.policy()),
             "snapshot": snapshots[0] if snapshots else None,
             "counts": counts,
             "decks": app.state.store.list("deck"),
@@ -169,7 +177,7 @@ def create_app(data_dir=None):
         raw_map = service.card_map(snapshot)
         return {
             **result,
-            "current_validation": validate_deck(result, snapshot, as_of),
+            "current_validation": validate_deck(result, snapshot, as_of, service.policy()),
             "card_details": [
                 {**line, "card": raw_map[line["card_id"]]} for line in result["lines"]
             ],
@@ -243,7 +251,8 @@ def create_app(data_dir=None):
         if deck is None:
             raise HTTPException(404, "Deck not found")
         snapshot = service.snapshot(deck["snapshot_id"])
-        validation = validate_deck(deck, snapshot, body.as_of)
+        policy = service.policy()
+        validation = validate_deck(deck, snapshot, body.as_of, policy)
         if validation["status"] != "ready":
             raise HTTPException(
                 422, {"message": "Deck is not ready under the dated policy.", **validation}
@@ -262,8 +271,8 @@ def create_app(data_dir=None):
             deck=deck,
             as_of=str(body.as_of),
             validation=validation,
-            provenance=service.provenance(snapshot),
-            policy=POLICY,
+            provenance=service.provenance(snapshot, policy),
+            policy=policy,
         )
         store.artifact("experiments", result["id"], result)
         return store.put(

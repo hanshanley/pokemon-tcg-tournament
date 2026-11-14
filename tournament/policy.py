@@ -3,7 +3,7 @@ import json
 import re
 import unicodedata
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 HANDBOOK = (
     "https://mcdn.pokemon.com/pokemon-prod/raw/upload/v1/live/static-assets/"
@@ -105,9 +105,52 @@ def second_friday(released):
     return released + timedelta(days=days + 7)
 
 
+def snapshot_policy(snapshot):
+    return snapshot.get("policy", POLICY)
+
+
+def source_status(policy, at=None):
+    at = at or datetime.now(UTC)
+    verification = policy.get("verification")
+    if not verification:
+        return {
+            "status": "unverified",
+            "message": "Legacy policy: sync sources to verify current legality.",
+        }
+    fresh = (
+        datetime.fromisoformat(verification["checked_at"])
+        <= at
+        <= datetime.fromisoformat(verification["valid_until"])
+    )
+    return {
+        "status": "fresh" if fresh else "stale",
+        "checked_at": verification["checked_at"],
+        "valid_until": verification["valid_until"],
+        "message": "Official Standard table and expansion coverage checked."
+        if fresh
+        else "Source verification expired. Current legality needs a successful automatic refresh.",
+    }
+
+
+def policy_window(policy, as_of, at=None):
+    if not policy["effective_from"] <= str(as_of) <= policy["reviewed_through"]:
+        return False
+    verification = policy.get("verification")
+    if not verification:
+        return True
+    at = at or datetime.now(UTC)
+    if as_of > at.date():
+        return False
+    if as_of == at.date():
+        return source_status(policy, at)["status"] == "fresh"
+    return str(as_of) <= verification["checked_at"][:10]
+
+
 class Legality:
-    def __init__(self, snapshot, as_of: date):
+    def __init__(self, snapshot, as_of: date, policy=None, *, at=None):
         self.as_of = as_of
+        self.policy = policy if policy is not None else snapshot_policy(snapshot)
+        self.within = policy_window(self.policy, as_of, at)
         self.sets = {item["id"]: item for item in snapshot["sets"]}
         self.cards = {item["id"]: item for item in snapshot["cards"]}
         self.families = defaultdict(list)
@@ -118,15 +161,13 @@ class Legality:
         return {"status": status, "reason": reason, "as_of": self.as_of.isoformat(), **extra}
 
     def _direct(self, card):
-        if (
-            not date.fromisoformat(POLICY["effective_from"])
-            <= self.as_of
-            <= date.fromisoformat(POLICY["reviewed_through"])
-        ):
-            return self._result("review", "Date is outside the reviewed policy window.")
+        if not self.within:
+            return self._result(
+                "review", "Date is outside the verified policy window or sources are stale."
+            )
         if card.get("legalities", {}).get("standard") == "Banned":
             return self._result("illegal", "Source explicitly marks this printing banned.")
-        if card.get("regulationMark") not in POLICY["legal_marks"]:
+        if card.get("regulationMark") not in self.policy["legal_marks"]:
             return self._result("review", "Needs a functionally identical legal reprint.")
         expansion = self.sets.get(card.get("set_id"), {})
         released = expansion.get("releaseDate")
@@ -139,7 +180,7 @@ class Legality:
             )
         if "promo" in expansion.get("name", "").lower() or "Promo" in card.get("rarity", ""):
             return self._result("review", "Promo needs its individual official legality date.")
-        override = POLICY["set_overrides"].get(expansion.get("id"))
+        override = self.policy["set_overrides"].get(expansion.get("id"))
         legal_from = (
             date.fromisoformat(override["legal_from"]) if override else second_friday(released)
         )
@@ -161,7 +202,7 @@ class Legality:
         direct = self._direct(card)
         if direct["status"] in ("legal", "illegal", "unreleased"):
             return direct
-        if not POLICY["effective_from"] <= self.as_of.isoformat() <= POLICY["reviewed_through"]:
+        if not self.within:
             return direct
         if basic_energy_kind(card):
             released = self.sets.get(card.get("set_id"), {}).get("releaseDate")
@@ -180,6 +221,6 @@ class Legality:
                     reprint_id=reprint["id"],
                     source=HANDBOOK,
                 )
-        if card.get("regulationMark") and card["regulationMark"] < "H":
+        if card.get("regulationMark") and card["regulationMark"] < min(self.policy["legal_marks"]):
             return self._result("review", "Rotated mark; no exact legal reprint proven.")
         return direct

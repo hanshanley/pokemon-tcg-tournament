@@ -1,5 +1,12 @@
 import { gunzipSync, zipSync, strToU8 } from 'fflate';
-import { assess, resolveDeck, validateDeck, setupExperiment } from './research.js';
+import {
+  assess,
+  resolveDeck,
+  validateDeck,
+  setupExperiment,
+  policyWindow,
+  sourceStatus,
+} from './research.js';
 
 const manifestURL = new URL('../data/manifest.json', import.meta.url);
 let contextPromise;
@@ -132,9 +139,52 @@ async function boot() {
     coverage: new Map(),
     failures: volatileFailures,
     running: false,
+    lastPublicationCheck: Date.now(),
+    refreshing: false,
   };
 }
 const context = () => (contextPromise ??= boot());
+
+async function refreshPublication(state) {
+  if (
+    state.refreshing ||
+    state.running ||
+    battleBusy ||
+    document.querySelector('dialog[open]') ||
+    Date.now() - state.lastPublicationCheck < 300000
+  )
+    return;
+  state.refreshing = true;
+  state.lastPublicationCheck = Date.now();
+  try {
+    const response = await request(manifestURL, { cache: 'no-store' });
+    if (!response.ok) return;
+    const manifest = await response.json();
+    if (manifest.records === state.manifest.records) return;
+    if (
+      manifest.application_sha256 !== state.manifest.application_sha256 ||
+      manifest.engine.bundle_sha256 !== state.manifest.engine.bundle_sha256
+    ) {
+      state.updateAvailable = true;
+      return;
+    }
+    const [snapshot, seed] = await Promise.all([
+      jsonAsset(new URL(manifest.catalog, manifestURL)),
+      jsonAsset(new URL(manifest.records, manifestURL)),
+    ]);
+    if (state.running || battleBusy || document.querySelector('dialog[open]')) return;
+    const viewedId = location.hash.match(/^#\/decks\/([^/]+)/)?.[1];
+    const viewedDeck = state.seed.decks.find((deck) => deck.id === viewedId);
+    if (viewedDeck) await freezeDeck(state, viewedDeck, state.snapshot);
+    state.manifest = manifest;
+    state.snapshot = snapshot;
+    state.seed = seed;
+    state.rows.clear();
+    state.updateAvailable = false;
+  } finally {
+    state.refreshing = false;
+  }
+}
 async function snapshotFor(state, id) {
   if (state.snapshot.id === id) return state.snapshot;
   const saved = await artifact(state.db, `snapshot:${id}`);
@@ -145,12 +195,13 @@ async function snapshotFor(state, id) {
   return saved;
 }
 function rowsFor(state, snapshot, asOf) {
-  const key = `${snapshot.id}:${asOf}`;
+  const within = policyWindow(state.seed.policy, asOf);
+  const key = `${snapshot.id}:${asOf}:${within}`;
   if (!state.rows.has(key)) {
     if (state.rows.size >= 3) state.rows.delete(state.rows.keys().next().value);
     state.rows.set(
       key,
-      snapshot.id === state.snapshot.id && asOf === state.seed.as_of
+      within && snapshot.id === state.snapshot.id && asOf === state.seed.as_of
         ? state.seed.card_rows
         : assess(snapshot, state.seed.policy, asOf),
     );
@@ -236,18 +287,19 @@ function validDate(value) {
 export async function staticAPI(path, body) {
   const state = await context();
   const url = new URL(path, 'https://fieldnotes.invalid');
-  const asOf = validDate(body?.as_of ?? url.searchParams.get('as_of') ?? state.seed.as_of);
+  const asOf = validDate(body?.as_of ?? url.searchParams.get('as_of') ?? today());
   const route = url.pathname.split('/').filter(Boolean);
   const engine = { ...state.manifest.engine, available: true };
   if (route[0] === 'health')
     return {
       status: 'ok',
       today: today(),
-      default_as_of:
-        today() > state.seed.policy.reviewed_through ? state.seed.policy.reviewed_through : today(),
+      default_as_of: today(),
       policy: state.seed.policy,
+      source_status: sourceStatus(state.seed.policy),
     };
   if (route[0] === 'overview') {
+    void refreshPublication(state).catch(() => {});
     const counts = {};
     for (const card of rowsFor(state, state.snapshot, asOf))
       counts[card.legality.status] = (counts[card.legality.status] ?? 0) + 1;
@@ -256,6 +308,7 @@ export async function staticAPI(path, body) {
       today: today(),
       as_of: asOf,
       policy: state.seed.policy,
+      source_status: sourceStatus(state.seed.policy),
       snapshot,
       counts,
       decks: await allDecks(state),
@@ -266,7 +319,12 @@ export async function staticAPI(path, body) {
         (battle) => state.failures.get(battle.id) ?? battle,
       ),
       engine,
-      deployment: { mode: 'pages', built_at: state.manifest.built_at, local_storage: true },
+      deployment: {
+        mode: 'pages',
+        built_at: state.manifest.built_at,
+        local_storage: true,
+        update_available: Boolean(state.updateAvailable),
+      },
     };
   }
   if (route[0] === 'cards' && !route[1]) {

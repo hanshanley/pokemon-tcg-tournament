@@ -20,16 +20,21 @@ complete ZIPs before clearing site storage. Other browsers/devices do not share 
 `.github/workflows/pages.yml` automatically refreshes public cards and latest published
 top-eight lists, verifies the pinned engine archive, builds both executables, runs Python,
 engine, and browser tests, and uploads a complete static site on pushes, manual dispatches,
-and daily at 06:17 UTC. Failed refreshes or tests never deploy over the previous good site.
+and every six hours at 00:17, 06:17, 12:17, and 18:17 UTC. GitHub may delay scheduled jobs.
+Failed refreshes or tests never deploy over the previous good site.
 The exporter excludes local manual decks, experiments, battle traces, and the SQLite database.
-Fresh source data does **not** extend the reviewed legality policy; the browser defaults to
-the last reviewed date when the current date is beyond that window.
+Each refresh also verifies the official handbook's **Standard** column and cross-checks
+released expansions against Limitless. The default is today, never a silently backdated
+format. Verification expires after at most 30 hours: stale deployments display a persistent
+warning and do not authorize current-date experiments or battles. Historical research and
+frozen downloads remain available.
+Open tabs check for compatible source publications every five minutes and update without
+discarding the private notebook. Application/engine upgrades request a reload instead of
+replacing a running executable. Successful builds record public verification metadata at
+most weekly, keeping this scheduled repository active without six-hourly commit noise.
 
-**Deployment is intentionally gated.** GitHub rejected Pages enablement for this private
-repository under the current account plan. Repository visibility has not been changed.
-Once Pages is eligible and enabled with GitHub Actions as its source, set the repository
-Actions variable `PAGES_ENABLED=true` and dispatch the workflow. Until then, verified builds
-remain downloadable as `tournament-pages-preview` Actions artifacts; no live Pages URL is claimed.
+The repository is public and GitHub Pages Actions hosting is enabled with
+`PAGES_ENABLED=true`. Successful workflows automatically deploy the verified site.
 
 To build or preview the same site locally:
 
@@ -149,9 +154,15 @@ ignored local storage.
 
 ## Dated Standard policy
 
-`tournament/policy.py` contains the explicit policy and evidence links. This milestone
-reviews in-person Standard from **April 10 through November 14, 2026**, accepting marks
-**H, I, J**. Dates outside that window produce `review`, not extrapolated eligibility.
+`tournament/current.py` refreshes Standard marks from the official handbook on every
+source sync and freezes the policy, source hashes, timestamps, and expansion checks into
+the immutable snapshot. The verified table currently accepts **H, I, J**.
+The table's mark-introduction dates are not interpreted as rotation dates. A changed
+format is supported from its verification date; earlier dates need an older frozen policy.
+Future table entries, unreadable/changed source layouts, missing currently legal expansions,
+and conflicting release evidence stop publication rather than guessing eligibility.
+Current verification has a maximum 30-hour lease, shortened if a known missing upcoming
+expansion becomes legal sooner. Expired and unverified future dates produce `review`.
 TCG Live's separate rotation date and other regions/formats are not modeled.
 
 The policy uses the
@@ -168,9 +179,9 @@ The policy uses the
 - Explicit upstream Standard `Banned` flags are rejected. This is not an independently
   exhaustive official ban-list service or judge certification.
 
-As of November 14, novel Delta Reign cards are still waiting until November 20; matching
-already-legal reprints are handled separately. Advancing the date past the reviewed window
-does not automatically authorize those cards.
+As of November 14, 2026, novel Delta Reign cards are still waiting until November 20;
+matching already-legal reprints are handled separately. Successful automatic refreshes
+and the selected date advance expansion eligibility without editing a hard-coded cutoff.
 
 Decks must resolve exactly by **set code + collector number + name**. The only name
 representation exception is `Fire Energy` versus `Basic Fire Energy` and equivalent
@@ -182,10 +193,11 @@ Basic Energy exemptions, and ACE SPEC/Radiant limits. Unknown wording, errata, l
 exceptions, physical-card requirements, and event-specific rulings still need review.
 Only decks assessed `ready` for the selected date can run experiments.
 
-To update the policy, verify the current official handbook, rotation announcement,
-release/legality notices, promo schedule, and ban list. Update the policy version, reviewed
-dates, accepted marks, and any evidenced exceptions; add regression tests before extending
-the reviewed window. Fetching fresh card data alone does not update the policy.
+Manual review is still required for novel release exceptions, individual promos, changed
+waiting-period/reprint rules, errata, and exhaustive ban-list certification. The automatic
+check does not claim to resolve those gaps or certify every printing. Card-pool updates
+also do not invent executable support: battles retain the separately verified engine's
+conservative coverage gate. Existing research downloads preserve their original policies.
 
 ## Experiment model and downloads
 

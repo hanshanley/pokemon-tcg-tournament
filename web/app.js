@@ -6,6 +6,7 @@ const state = {
   category: '',
   page: 1,
   request: 0,
+  followToday: true,
 };
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) =>
@@ -71,8 +72,9 @@ function header(eyebrow, title, description, actions = '') {
 
 function snapshotNote() {
   const snapshot = state.overview?.snapshot;
+  const freshness = state.overview?.source_status;
   return snapshot
-    ? `<div class="snapshot-note"><span class="dot"></span>Latest bulk source <code>${short(snapshot.source_commit)}</code><span>·</span>Fetched ${escape(snapshot.fetched_at.slice(0, 10))}<span>·</span>Policy reviewed through ${escape(state.overview.policy.reviewed_through)}</div>`
+    ? `<div class="snapshot-note"><span class="dot"></span>Latest bulk source <code>${short(snapshot.source_commit)}</code><span>·</span>Fetched ${escape(snapshot.fetched_at.slice(0, 10))}<span>·</span>${freshness?.checked_at ? `Legality checked ${escape(freshness.checked_at.slice(0, 16).replace('T', ' '))} UTC` : 'Legacy policy: current legality unverified'}</div>`
     : '';
 }
 
@@ -86,11 +88,34 @@ function showJob() {
   $('#job-status').innerHTML = job
     ? `<div class="job"><span class="spinner"></span><strong>Source operation in progress</strong><span>${escape(job.message)}</span></div>`
     : '';
+  const freshness = state.overview?.source_status;
+  if (freshness && freshness.status !== 'fresh') {
+    $('#job-status').insertAdjacentHTML(
+      'beforeend',
+      `<div class="error" role="status"><strong>Current source check: ${escape(freshness.status)}.</strong> ${escape(freshness.message)} Historical research remains available.</div>`,
+    );
+  }
+  if (state.overview?.deployment?.update_available)
+    $('#job-status').insertAdjacentHTML(
+      'beforeend',
+      '<div class="error" role="status">A newer application or rules engine is available. Reload to apply it; finish or export any running battle first.</div>',
+    );
+  $('.marks').innerHTML = (state.overview?.policy.legal_marks ?? [])
+    .map((mark) => `<span>${escape(mark)}</span>`)
+    .join('');
 }
 
 async function refresh(render = true) {
   const previous = state.overview;
   state.overview = await api(`/overview?as_of=${state.asOf}`);
+  if (state.followToday && state.asOf !== state.overview.today) {
+    state.asOf = state.overview.today;
+    $('#as-of').value = state.asOf;
+    state.overview = await api(`/overview?as_of=${state.asOf}`);
+    render = true;
+  }
+  if (previous?.source_status?.status !== state.overview.source_status?.status) render = true;
+  if (previous?.snapshot?.id !== state.overview.snapshot?.id) render = true;
   showJob();
   if (render) await renderRoute();
   else {
@@ -498,6 +523,18 @@ function renderSources() {
       `<div class="note"><strong>Supplemental exact-printing evidence</strong>${snapshot.supplements.map((item) => `<p>${link(item.source, `${number(item.cards)} Basic Energy printings`)}<br />Retrieved ${escape(item.fetched_at)}<br />Index hash <code>${short(item.source_sha256)}</code></p>`).join('')}<p>These records are included in the combined snapshot hash, not the bulk repository commit.</p></div>`,
     );
   }
+  const verification = overview.policy.verification;
+  if (verification) {
+    const label = [...$('#content').querySelectorAll('dt')].find(
+      (item) => item.textContent === 'Reviewed through',
+    );
+    label.textContent = 'Verification expires';
+    label.nextElementSibling.textContent = verification.valid_until;
+    $('#content .detail-grid section:last-child').insertAdjacentHTML(
+      'beforeend',
+      `<div class="note"><strong>Automatic current-format checks</strong><p>Checked ${escape(verification.checked_at)}. Refreshes every six hours; expires after at most 30 hours. Future formats are never guessed.</p><p>${link(verification.expansion_coverage.source, 'Independent released-expansion index')} · ${number(verification.expansion_coverage.checked_expansions.length)} expansions checked. This checks expansion presence, not independent per-printing completeness.</p><p>Handbook hash <code>${short(verification.handbook_sha256)}</code></p></div>`,
+    );
+  }
 }
 
 function modal(title, content) {
@@ -649,6 +686,7 @@ $('#dialog').addEventListener('click', (event) => {
 $('#as-of').addEventListener('change', async (event) => {
   if (!event.target.value) return;
   state.asOf = event.target.value;
+  state.followToday = state.asOf === state.overview.today;
   state.page = 1;
   try {
     await refresh();

@@ -11,6 +11,7 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
+from tournament.current import refresh_policy
 from tournament.store import now
 
 REPOSITORY = "PokemonTCG/pokemon-tcg-data"
@@ -93,6 +94,11 @@ def sync_cards(store, progress=lambda message: None):
         "sets": sets,
         "cards": cards,
     }
+    progress("Verifying official Standard marks and current expansion coverage")
+    previous = store.list("snapshot")
+    snapshot["policy"] = refresh_policy(
+        fetch, snapshot, previous=previous[0].get("policy") if previous else None
+    )
     return store.save_snapshot(snapshot)
 
 

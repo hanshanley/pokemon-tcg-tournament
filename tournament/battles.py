@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from tournament.decks import validate_deck
-from tournament.policy import POLICY, basic_energy_kind, canonical
+from tournament.policy import basic_energy_kind, canonical
 from tournament.sources import fetch
 from tournament.store import now
 
@@ -303,12 +303,13 @@ class Battles:
 
     def start(self, name, deck_ids, as_of: date, seed, max_actions, max_turns):
         decks, snapshots, coverage = [], [], []
+        policy = self.service.policy()
         for deck_id in deck_ids:
             deck = self.store.get("deck", deck_id)
             if deck is None:
                 raise ValueError("Battle deck not found.")
             snapshot = self.service.snapshot(deck["snapshot_id"])
-            validation = validate_deck(deck, snapshot, as_of)
+            validation = validate_deck(deck, snapshot, as_of, policy)
             if validation["status"] != "ready":
                 raise ValueError(
                     f"{deck['name']}: dated deck validation is {validation['status']}."
@@ -357,7 +358,7 @@ class Battles:
                 "battle",
                 {
                     "name": name,
-                    "policy": POLICY,
+                    "policy": policy,
                     "status": "queued",
                     "seed": seed,
                     "as_of": str(as_of),

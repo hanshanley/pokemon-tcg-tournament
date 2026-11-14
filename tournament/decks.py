@@ -67,8 +67,8 @@ def resolve_deck(text, snapshot):
     }
 
 
-def validate_deck(deck, snapshot, as_of: date):
-    legality = Legality(snapshot, as_of)
+def validate_deck(deck, snapshot, as_of: date, policy=None):
+    legality = Legality(snapshot, as_of, policy)
     errors = list(deck.get("resolution_errors", []))
     warnings = []
     count_by_name = Counter()

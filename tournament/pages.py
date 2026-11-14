@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 
 from tournament.battles import ROOT, Engine, prepare_engine
-from tournament.policy import POLICY
+from tournament.policy import snapshot_policy, source_status
 from tournament.service import Service
 from tournament.sources import sync_cards
 from tournament.store import Store, digest, now
@@ -39,7 +39,10 @@ def export_site(directory, output, refresh=False):
         build = engine.status()
         if not build["available"]:
             raise ValueError(build["message"])
-        as_of = min(date.today().isoformat(), POLICY["reviewed_through"])
+        policy = snapshot_policy(snapshot)
+        if refresh and source_status(policy)["status"] != "fresh":
+            raise ValueError("Current policy verification expired during the site build.")
+        as_of = date.today().isoformat()
         decks = [
             deck
             for deck in store.list("deck")
@@ -86,6 +89,7 @@ def export_site(directory, output, refresh=False):
 
         site = {
             "built_at": now(),
+            "source_status": source_status(policy),
             "engine": build,
             "application_sha256": application_hash,
             "catalog": asset("catalog", encoded(snapshot)),
@@ -94,8 +98,8 @@ def export_site(directory, output, refresh=False):
                 encoded(
                     {
                         "as_of": as_of,
-                        "policy": POLICY,
-                        "policy_sha256": digest(POLICY),
+                        "policy": policy,
+                        "policy_sha256": digest(policy),
                         "decks": decks,
                         "events": sorted(
                             store.list("event"), key=lambda event: event["date"], reverse=True

@@ -6,7 +6,7 @@ from datetime import date
 from functools import lru_cache
 
 from tournament.decks import resolve_deck, validate_deck
-from tournament.policy import POLICY, Legality
+from tournament.policy import POLICY, Legality, policy_window, snapshot_policy
 from tournament.sources import (
     LIMITLESS,
     fetch,
@@ -24,7 +24,7 @@ class Service:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="source-sync")
         self.lock = threading.Lock()
         self.snapshot = lru_cache(maxsize=3)(self._snapshot)
-        self.assessed = lru_cache(maxsize=4)(self._assessed)
+        self._assessed_cached = lru_cache(maxsize=4)(self._assessed)
         for job in store.list("job"):
             if job["status"] in ("running", "queued"):
                 store.put("job", {**job, "status": "interrupted", "message": "Service restarted."})
@@ -32,7 +32,7 @@ class Service:
     def close(self):
         self.executor.shutdown(wait=True, cancel_futures=True)
         self.snapshot.cache_clear()
-        self.assessed.cache_clear()
+        self._assessed_cached.cache_clear()
 
     def _snapshot(self, snapshot_id):
         return self.store.artifact("snapshots", snapshot_id)
@@ -43,7 +43,16 @@ class Service:
             raise ValueError("Sync the card catalog before importing decks or running experiments.")
         return self.snapshot(snapshots[0]["id"])
 
-    def _assessed(self, snapshot_id, as_of):
+    def policy(self):
+        snapshots = self.store.list("snapshot")
+        return snapshot_policy(self.snapshot(snapshots[0]["id"])) if snapshots else POLICY
+
+    def assessed(self, snapshot_id, as_of):
+        policy = snapshot_policy(self.snapshot(snapshot_id))
+        within = policy_window(policy, date.fromisoformat(as_of))
+        return self._assessed_cached(snapshot_id, as_of, within)
+
+    def _assessed(self, snapshot_id, as_of, within):
         snapshot = self.snapshot(snapshot_id)
         legality = Legality(snapshot, date.fromisoformat(as_of))
         sets = legality.sets
@@ -75,13 +84,14 @@ class Service:
     def add_deck(self, name, text, snapshot, as_of, source=None):
         resolved = resolve_deck(text, snapshot)
         resolved.pop("cards")
-        validation = validate_deck(resolved, snapshot, as_of)
+        policy = self.policy()
+        validation = validate_deck(resolved, snapshot, as_of, policy)
         return self.store.put(
             "deck",
             {
                 "name": name,
                 "snapshot_id": snapshot["id"],
-                "policy": POLICY,
+                "policy": policy,
                 "text": text,
                 **resolved,
                 "validation": validation,
@@ -219,10 +229,10 @@ class Service:
     def card_map(self, snapshot):
         return {card["id"]: card for card in snapshot["cards"]}
 
-    def provenance(self, snapshot):
+    def provenance(self, snapshot, policy=None):
         return {
             "snapshot_id": snapshot["id"],
             "content_sha256": snapshot["content_sha256"],
             "source_commit": snapshot["source_commit"],
-            "policy_sha256": digest(POLICY),
+            "policy_sha256": digest(self.policy() if policy is None else policy),
         }
