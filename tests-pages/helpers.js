@@ -1,5 +1,7 @@
 import { buildSync } from 'esbuild';
 import { readFileSync } from 'node:fs';
+import { gunzipSync, gzipSync } from 'node:zlib';
+import { assess } from '../web/research.js';
 
 const client = buildSync({
   entryPoints: ['web/static-client.js'],
@@ -21,6 +23,24 @@ export async function researchClient(page) {
 }
 
 export async function importReferences(page) {
+  await page.clock.install({ time: new Date('2026-11-14T12:00:00Z') });
+  await page.route('**/records-*.gz', async (route) => {
+    const response = await route.fetch();
+    const seed = JSON.parse(gunzipSync(await response.body()));
+    const manifest = JSON.parse(readFileSync('dist/data/manifest.json', 'utf8'));
+    const snapshot = JSON.parse(gunzipSync(readFileSync(`dist/data/${manifest.catalog}`)));
+    seed.policy = {
+      ...seed.policy,
+      id: 'test-only-frozen-2026-reference-format',
+      effective_from: '2026-04-10',
+      reviewed_through: '2026-11-14',
+      legal_marks: ['H', 'I', 'J'],
+    };
+    delete seed.policy.verification;
+    seed.as_of = '2026-11-14';
+    seed.card_rows = assess(snapshot, seed.policy, seed.as_of);
+    await route.fulfill({ body: gzipSync(JSON.stringify(seed)) });
+  });
   await researchClient(page);
   return page.evaluate(async (decks) => {
     const saved = [];

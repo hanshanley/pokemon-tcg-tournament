@@ -111,6 +111,31 @@ def test_refresh_preserves_the_observed_format_start(monkeypatch):
     assert policy["effective_from"] == previous["effective_from"]
 
 
+def test_changed_official_marks_rotate_current_validation_automatically(monkeypatch):
+    fetch = mock_handbook(monkeypatch, table("IJK"))
+    snapshot = sample_snapshot()
+    snapshot["sets"][0]["releaseDate"] = "2026/09/18"
+    snapshot["cards"][1]["regulationMark"] = "I"
+    at = AT.replace(year=2027, month=4, day=10)
+
+    def fetch_current(url):
+        return fetch(url) if url == HANDBOOK else index(released="18 Sep 26")
+
+    policy = refresh_policy(fetch_current, snapshot, at=at)
+    assert policy["legal_marks"] == ["I", "J", "K"]
+    assert policy["effective_from"] == "2027-04-10"
+    assert (
+        Legality(snapshot, at.date(), policy, at=at).check(snapshot["cards"][0])["status"]
+        == "review"
+    )
+    assert (
+        Legality(snapshot, at.date(), policy, at=at).check(snapshot["cards"][1])["status"]
+        == "legal"
+    )
+    refreshed = refresh_policy(fetch_current, snapshot, at=at + timedelta(days=1), previous=policy)
+    assert refreshed["effective_from"] == policy["effective_from"]
+
+
 def test_changed_waiting_or_reprint_rules_require_review(monkeypatch):
     fetch = mock_handbook(monkeypatch, table().replace("Second Friday", "Third Friday"))
     with pytest.raises(ValueError, match="rules changed"):

@@ -2,22 +2,25 @@ import { expect, test } from '@playwright/test';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { researchClient } from './helpers.js';
 
-const start = '2026-11-14T12:00:00Z';
+const start = new Date();
+start.setUTCHours(12, 0, 0, 0);
+const day = start.toISOString().slice(0, 10);
+const after = (milliseconds) => new Date(start.getTime() + milliseconds).toISOString();
 
 test('today is never backdated and cached current legality expires in an open tab', async ({
   page,
 }) => {
-  await page.clock.install({ time: new Date(start) });
+  await page.clock.install({ time: start });
   await page.route('**/records-*.gz', async (route) => {
     const response = await route.fetch();
     const seed = JSON.parse(gunzipSync(await response.body()));
-    seed.as_of = '2026-11-14';
+    seed.as_of = day;
     seed.policy.verification = {
       ...seed.policy.verification,
-      checked_at: '2026-11-14T11:59:00Z',
-      valid_until: '2026-11-14T12:01:00Z',
+      checked_at: after(-60000),
+      valid_until: after(60000),
     };
-    seed.policy.reviewed_through = '2026-11-14';
+    seed.policy.reviewed_through = day;
     await route.fulfill({ body: gzipSync(JSON.stringify(seed)) });
   });
   await researchClient(page);
@@ -30,10 +33,11 @@ test('today is never backdated and cached current legality expires in an open ta
   await expect(page.getByRole('status').filter({ hasText: 'verification expired' })).toBeVisible();
   await page.clock.fastForward(3 * 86400000);
   const health = await page.evaluate(() => globalThis.research.staticAPI('/health'));
-  expect(health.default_as_of).toBe('2026-11-17');
-  await expect(page.locator('#as-of')).toHaveValue('2026-11-17');
-  const historical = await page.evaluate(() =>
-    globalThis.research.staticAPI('/overview?as_of=2026-11-14'),
+  expect(health.default_as_of).toBe(after(3 * 86400000).slice(0, 10));
+  await expect(page.locator('#as-of')).toHaveValue(health.default_as_of);
+  const historical = await page.evaluate(
+    (day) => globalThis.research.staticAPI(`/overview?as_of=${day}`),
+    day,
   );
   expect(historical.counts.legal).toBeGreaterThan(0);
 });
@@ -41,7 +45,7 @@ test('today is never backdated and cached current legality expires in an open ta
 test('compatible new source publications refresh an open tab without losing its notebook', async ({
   page,
 }) => {
-  await page.clock.install({ time: new Date(start) });
+  await page.clock.install({ time: start });
   let published = false;
   let seed;
   let snapshot;
@@ -57,8 +61,8 @@ test('compatible new source publications refresh an open tab without losing its 
   await page.route('**/records-*.gz', async (route) => {
     if (route.request().url().endsWith('records-updated.gz')) {
       const updated = structuredClone(seed);
-      updated.policy.verification.checked_at = '2026-11-14T12:04:00Z';
-      updated.policy.verification.valid_until = '2026-11-15T18:04:00Z';
+      updated.policy.verification.checked_at = after(240000);
+      updated.policy.verification.valid_until = after(30 * 3600000 + 240000);
       for (const deck of updated.decks) deck.snapshot_id = 'updated-catalog';
       await route.fulfill({ body: gzipSync(JSON.stringify(updated)) });
     } else {
@@ -66,8 +70,8 @@ test('compatible new source publications refresh an open tab without losing its 
       seed = JSON.parse(gunzipSync(await response.body()));
       seed.policy.verification = {
         ...seed.policy.verification,
-        checked_at: '2026-11-14T11:59:00Z',
-        valid_until: '2026-11-15T17:59:00Z',
+        checked_at: after(-60000),
+        valid_until: after(30 * 3600000 - 60000),
       };
       await route.fulfill({ body: gzipSync(JSON.stringify(seed)) });
     }
@@ -99,6 +103,6 @@ test('compatible new source publications refresh an open tab without losing its 
     )
     .toBe('updated-catalog');
   const result = await page.evaluate(() => globalThis.research.staticAPI('/overview'));
-  expect(result.policy.verification.checked_at).toBe('2026-11-14T12:04:00Z');
+  expect(result.policy.verification.checked_at).toBe(after(240000));
   expect(result.decks.some((item) => item.id === deck.id)).toBe(true);
 });
