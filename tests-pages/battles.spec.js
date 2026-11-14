@@ -4,6 +4,7 @@ import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { importReferences } from './helpers.js';
 
 test('real browser battle, complete ZIP, offline reproduction and persistent replay', async ({
   page,
@@ -14,8 +15,11 @@ test('real browser battle, complete ZIP, offline reproduction and persistent rep
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.includes('/api/')) backend.push(request.url());
   });
-  await page.goto('./#/battles');
+  const ids = await importReferences(page);
+  await page.reload();
   await page.getByRole('button', { name: 'New battle' }).click();
+  await page.getByLabel('Seat 1', { exact: true }).selectOption(ids[0]);
+  await page.getByLabel('Seat 2', { exact: true }).selectOption(ids[1]);
   await expect(page.getByRole('button', { name: 'Resolve complete battle' })).toBeEnabled({
     timeout: 30000,
   });
@@ -51,6 +55,8 @@ test('real browser battle, complete ZIP, offline reproduction and persistent rep
     ]),
   );
   const full = JSON.parse(strFromU8(files['battle.json']));
+  expect(JSON.parse(strFromU8(files['policy.json'])).legal_marks).toEqual(['H', 'I', 'J']);
+  expect(full.battle.policy.legal_marks).toEqual(['H', 'I', 'J']);
   expect(full.result.status).toBe('completed');
   expect(full.result.frames.length).toBe(full.result.steps);
   expect(full.result.frames.some((frame) => frame.action.type === 'ATTACK_ACTION')).toBe(true);
@@ -76,6 +82,34 @@ test('real browser battle, complete ZIP, offline reproduction and persistent rep
   } finally {
     await rm(scratch, { recursive: true });
   }
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve) => {
+      const request = indexedDB.open('fieldnotes-tournament', 1);
+      request.onsuccess = () => resolve(request.result);
+    });
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('artifacts', 'readwrite');
+      const store = transaction.objectStore('artifacts');
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        if (String(cursor.key).startsWith('battle:')) {
+          const value = cursor.value;
+          value.battle.policy = 'upstream-simple-tactics-v1';
+          cursor.update(value);
+        }
+        cursor.continue();
+      };
+      transaction.oncomplete = resolve;
+      transaction.onerror = reject;
+    });
+    db.close();
+  });
+  const legacyPending = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Complete battle' }).click();
+  const legacyFiles = unzipSync(await readFile(await (await legacyPending).path()));
+  expect(JSON.parse(strFromU8(legacyFiles['policy.json'])).legal_marks).toEqual(['H', 'I', 'J']);
   await page.reload();
   await expect(page.getByRole('link', { name: 'Complete battle' })).toBeVisible();
   await expect(page.getByLabel('Replay step')).toBeVisible();
@@ -113,8 +147,11 @@ test('Pages setup experiments retain full trials and mismatched decks remain blo
 });
 
 test('action-limited browser matches have no winner', async ({ page }) => {
-  await page.goto('./#/battles');
+  const ids = await importReferences(page);
+  await page.reload();
   await page.getByRole('button', { name: 'New battle' }).click();
+  await page.getByLabel('Seat 1', { exact: true }).selectOption(ids[0]);
+  await page.getByLabel('Seat 2', { exact: true }).selectOption(ids[1]);
   await page.getByLabel('Action limit').fill('2');
   await page.getByRole('button', { name: 'Resolve complete battle' }).click();
   await expect(page.getByText('limited', { exact: true })).toBeVisible({ timeout: 30000 });

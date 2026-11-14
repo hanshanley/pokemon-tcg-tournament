@@ -3,10 +3,12 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
 import threading
+import unicodedata
 import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -75,6 +77,53 @@ def prepare_engine(directory, progress=print):
 
 def normalized_name(value):
     return canonical(value).casefold()
+
+
+def mechanical_errors(card, candidate):
+    def key(value):
+        value = unicodedata.normalize("NFKD", normalized_name(value))
+        value = re.sub("[^a-z0-9]", "", value)
+        return "darkness" if value == "dark" else value
+
+    def values(items):
+        return sorted(key(item) for item in (items or []))
+
+    errors = []
+    if key(card["supertype"]) != key(candidate.get("category")):
+        errors.append("Source and executable card categories differ.")
+    if card["supertype"] == "Pokémon":
+        if values(card.get("types")) != values(candidate.get("types")):
+            errors.append("Source and executable Pokémon types differ.")
+        stage = next(
+            (s for s in card.get("subtypes", []) if s in ("Basic", "Stage 1", "Stage 2")), None
+        )
+        if stage and key(stage) != key(candidate.get("stage")):
+            errors.append("Source and executable evolution stages differ.")
+        for attack, implemented in zip(card.get("attacks", []), candidate["attacks"], strict=False):
+            if values(attack.get("cost")) != values(implemented.get("cost")):
+                errors.append(f"Source and executable attack costs differ ({attack['name']}).")
+            damage = str(attack.get("damage", ""))
+            if damage.isascii() and damage.isdigit() and int(damage) != implemented["damage"]:
+                errors.append(
+                    f"Source and executable fixed attack damage differ ({attack['name']})."
+                )
+    categories = {
+        "Trainer": (("Item", "Supporter", "Stadium", "Pokémon Tool"), "trainer_type"),
+        "Energy": (("Basic", "Special"), "energy_type"),
+    }
+    if card["supertype"] in categories:
+        names, field = categories[card["supertype"]]
+        subtypes = card.get("subtypes", [])
+        expected = (
+            "Pokémon Tool"
+            if "Pokémon Tool" in subtypes
+            else next((s for s in subtypes if s in names), None)
+        )
+        if expected == "Pokémon Tool":
+            expected = "tool"
+        if expected and key(expected) != key(candidate.get(field)):
+            errors.append(f"Source and executable {card['supertype']} categories differ.")
+    return errors
 
 
 class Engine:
@@ -156,7 +205,17 @@ class Engine:
         if not build["available"]:
             return {"ready": False, "engine": build, "cards": [], "message": build["message"]}
         index = defaultdict(list)
-        for card in self.load_catalog(build["bundle_sha256"]):
+        try:
+            catalog = self.load_catalog(build["bundle_sha256"])
+        except (ValueError, OSError) as error:
+            message = f"Executable coverage unavailable: {error}"
+            return {
+                "ready": False,
+                "engine": {**build, "available": False, "message": message},
+                "cards": [],
+                "message": message,
+            }
+        for card in catalog:
             index[(card["set"].upper(), card["number"].lstrip("0") or "0")].append(card)
         sets = {entry["id"]: entry for entry in snapshot["sets"]}
         cards = {card["id"]: card for card in snapshot["cards"]}
@@ -183,6 +242,7 @@ class Engine:
                 errors.append(f"{len(matches)} exact engine printings; no name-only substitution.")
             else:
                 errors.extend(candidate["blockers"])
+                errors.extend(mechanical_errors(card, candidate))
                 if card["supertype"] == "Pokémon":
                     if str(candidate["hp"]) != str(card.get("hp")):
                         errors.append("Source and executable HP differ.")

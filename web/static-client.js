@@ -3,6 +3,24 @@ import { assess, resolveDeck, validateDeck, setupExperiment } from './research.j
 
 const manifestURL = new URL('../data/manifest.json', import.meta.url);
 let contextPromise;
+let battleBusy = false;
+const volatileFailures = new Map();
+const documentOwner = crypto.randomUUID();
+let leasePromise;
+async function ownerLease() {
+  if (!navigator.locks) return;
+  leasePromise ??= new Promise((resolve, reject) => {
+    navigator.locks
+      .request(`fieldnotes-owner:${documentOwner}`, () => {
+        resolve();
+        return new Promise(() => {});
+      })
+      .catch(reject);
+  });
+  await leasePromise;
+}
+const request = (url, options = {}) =>
+  fetch(url, { ...options, signal: AbortSignal.timeout(180000) });
 const now = () => new Date().toISOString();
 const today = () => {
   const date = new Date();
@@ -15,7 +33,7 @@ export async function fingerprint(value) {
     .join('');
 }
 async function bytes(url) {
-  const response = await fetch(url);
+  const response = await request(url);
   if (!response.ok)
     throw new Error(`Published asset unavailable (${response.status}); reload the site.`);
   const raw = new Uint8Array(await response.arrayBuffer());
@@ -75,7 +93,7 @@ const artifact = (db, key, value) =>
 
 async function boot() {
   const [response, db] = await Promise.all([
-    fetch(manifestURL, { cache: 'no-store' }),
+    request(manifestURL, { cache: 'no-store' }),
     openDatabase(),
   ]);
   if (!response.ok) throw new Error('Published source manifest is unavailable.');
@@ -84,19 +102,24 @@ async function boot() {
     jsonAsset(new URL(manifest.catalog, manifestURL)),
     jsonAsset(new URL(manifest.records, manifestURL)),
   ]);
-  const owner = sessionStorage.getItem('fieldnotes-tab') ?? crypto.randomUUID();
-  sessionStorage.setItem('fieldnotes-tab', owner);
+  await ownerLease();
+  const held = navigator.locks
+    ? new Set((await navigator.locks.query()).held.map((lock) => lock.name))
+    : null;
   for (const battle of await list(db, 'battle')) {
     if (
       ['queued', 'running'].includes(battle.status) &&
-      (battle.owner === owner ||
-        Date.now() - Date.parse(battle.updated_at ?? battle.created_at) > 300000)
+      (held
+        ? !held.has(`fieldnotes-owner:${battle.owner}`)
+        : Date.now() - Date.parse(battle.updated_at ?? battle.created_at) > 300000)
     ) {
-      await put(db, 'battle', {
+      const interrupted = {
         ...battle,
         status: 'interrupted',
-        reason: 'The browser worker was closed before the battle finished.',
-      });
+        reason: 'No live browser worker could be confirmed; no result is inferred.',
+      };
+      volatileFailures.set(battle.id, interrupted);
+      await put(db, 'battle', interrupted).catch(() => {});
     }
   }
   return {
@@ -104,9 +127,10 @@ async function boot() {
     db,
     snapshot,
     seed,
-    owner,
+    owner: documentOwner,
     rows: new Map(),
     coverage: new Map(),
+    failures: volatileFailures,
     running: false,
   };
 }
@@ -149,21 +173,26 @@ async function workerCall(state, mode, payload) {
     throw new Error('Browser rules engine checksum mismatch.');
   const url = URL.createObjectURL(new Blob([script], { type: 'text/javascript' }));
   const worker = new Worker(url);
-  URL.revokeObjectURL(url);
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      worker.terminate();
-      reject(new Error('Browser worker exceeded 180 seconds; no winner is inferred.'));
-    }, 180000);
+    const timeout = setTimeout(
+      () => finish('Browser worker exceeded 180 seconds; no winner is inferred.'),
+      180000,
+    );
     const finish = (error, value) => {
       clearTimeout(timeout);
       worker.terminate();
+      URL.revokeObjectURL(url);
       if (error) reject(new Error(error));
       else resolve(value);
     };
     worker.onmessage = ({ data }) => finish(data.error, data.result);
     worker.onerror = (error) => finish(error.message);
-    worker.postMessage({ id: 1, mode, payload });
+    worker.onmessageerror = () => finish('Browser worker returned an unreadable result.');
+    try {
+      worker.postMessage({ id: 1, mode, payload });
+    } catch (error) {
+      finish(error.message);
+    }
   });
 }
 async function coverageFor(state, deck, snapshot) {
@@ -177,6 +206,15 @@ async function coverageFor(state, deck, snapshot) {
         deck,
         snapshot,
         engine: { ...state.manifest.engine, available: true },
+      }).catch((error) => {
+        state.coverage.delete(key);
+        const message = `Executable coverage unavailable: ${error.message}`;
+        return {
+          ready: false,
+          engine: { ...state.manifest.engine, available: false, message },
+          cards: [],
+          message,
+        };
       }),
     );
   return state.coverage.get(key);
@@ -224,7 +262,9 @@ export async function staticAPI(path, body) {
       events: state.seed.events,
       experiments: await list(state.db, 'experiment'),
       jobs: await list(state.db, 'job'),
-      battles: await list(state.db, 'battle'),
+      battles: (await list(state.db, 'battle')).map(
+        (battle) => state.failures.get(battle.id) ?? battle,
+      ),
       engine,
       deployment: { mode: 'pages', built_at: state.manifest.built_at, local_storage: true },
     };
@@ -264,7 +304,7 @@ export async function staticAPI(path, body) {
     };
   }
   if (route[0] === 'sync') {
-    if (state.running)
+    if (battleBusy)
       throw new Error('Wait for the running battle to finish before refreshing published sources.');
     contextPromise = boot();
     await contextPromise;
@@ -369,111 +409,128 @@ export async function staticAPI(path, body) {
     return experiment;
   }
   if (route[0] === 'battles' && !route[1] && body) {
-    if (state.running) throw new Error('A battle is already running in this tab.');
-    if (
-      !body.name?.trim() ||
-      body.name.length > 120 ||
-      body.deck_ids?.length !== 2 ||
-      !Number.isInteger(body.seed) ||
-      body.seed < 0 ||
-      body.seed > 2147483647 ||
-      !Number.isInteger(body.max_actions) ||
-      body.max_actions < 2 ||
-      body.max_actions > 5000 ||
-      !Number.isInteger(body.max_turns) ||
-      body.max_turns < 1 ||
-      body.max_turns > 500
-    )
-      throw new Error('Invalid battle protocol.');
-    const decks = [],
-      snapshots = [],
-      coverage = [];
-    for (const id of body.deck_ids) {
-      const deck = await deckFor(state, id);
-      const snapshot = await snapshotFor(state, deck.snapshot_id);
-      if (validateDeck(deck, snapshot, rowsFor(state, snapshot, asOf), asOf).status !== 'ready')
-        throw new Error(`${deck.name} needs dated legality review.`);
-      const report = await coverageFor(state, deck, snapshot);
-      if (!report.ready)
-        throw new Error(
-          `${deck.name} has unmapped or mismatched effects; inspect its executable coverage.`,
+    if (battleBusy) throw new Error('A battle is already preparing or running in this tab.');
+    battleBusy = true;
+    try {
+      if (
+        !body.name?.trim() ||
+        body.name.length > 120 ||
+        body.deck_ids?.length !== 2 ||
+        !Number.isInteger(body.seed) ||
+        body.seed < 0 ||
+        body.seed > 2147483647 ||
+        !Number.isInteger(body.max_actions) ||
+        body.max_actions < 2 ||
+        body.max_actions > 5000 ||
+        !Number.isInteger(body.max_turns) ||
+        body.max_turns < 1 ||
+        body.max_turns > 500
+      )
+        throw new Error('Invalid battle protocol.');
+      const decks = [],
+        snapshots = [],
+        coverage = [];
+      for (const id of body.deck_ids) {
+        const deck = await deckFor(state, id);
+        const snapshot = await snapshotFor(state, deck.snapshot_id);
+        if (validateDeck(deck, snapshot, rowsFor(state, snapshot, asOf), asOf).status !== 'ready')
+          throw new Error(`${deck.name} needs dated legality review.`);
+        const report = await coverageFor(state, deck, snapshot);
+        if (!report.ready)
+          throw new Error(
+            `${deck.name} has unmapped or mismatched effects; inspect its executable coverage.`,
+          );
+        decks.push(deck);
+        snapshots.push(snapshot);
+        coverage.push(report);
+      }
+      const payload = {
+        mode: 'battle',
+        seed: body.seed,
+        max_actions: body.max_actions,
+        max_turns: body.max_turns,
+        decks: decks.map((deck, index) => ({
+          name: `Seat ${index + 1} - ${deck.name}`,
+          cards: coverage[index].cards.flatMap((card) =>
+            Array(card.count).fill(card.engine_full_name),
+          ),
+        })),
+      };
+      if (!(await artifact(state.db, `bundle:${engine.bundle_sha256}`))) {
+        const bundle = await bytes(new URL(state.manifest.node_worker, manifestURL));
+        if ((await fingerprint(bundle)) !== engine.bundle_sha256)
+          throw new Error('Offline engine bundle checksum mismatch.');
+        await artifact(state.db, `bundle:${engine.bundle_sha256}`, bundle);
+      }
+      if (!(await artifact(state.db, `license:${engine.bundle_sha256}`))) {
+        const license = await bytes(new URL('../static/THIRD_PARTY_LICENSE.txt', manifestURL));
+        await artifact(
+          state.db,
+          `license:${engine.bundle_sha256}`,
+          new TextDecoder().decode(license),
         );
-      decks.push(deck);
-      snapshots.push(snapshot);
-      coverage.push(report);
-    }
-    const payload = {
-      mode: 'battle',
-      seed: body.seed,
-      max_actions: body.max_actions,
-      max_turns: body.max_turns,
-      decks: decks.map((deck, index) => ({
-        name: `Seat ${index + 1} - ${deck.name}`,
-        cards: coverage[index].cards.flatMap((card) =>
-          Array(card.count).fill(card.engine_full_name),
-        ),
-      })),
-    };
-    if (!(await artifact(state.db, `bundle:${engine.bundle_sha256}`))) {
-      const bundle = await bytes(new URL(state.manifest.node_worker, manifestURL));
-      if ((await fingerprint(bundle)) !== engine.bundle_sha256)
-        throw new Error('Offline engine bundle checksum mismatch.');
-      await artifact(state.db, `bundle:${engine.bundle_sha256}`, bundle);
-    }
-    if (!(await artifact(state.db, `license:${engine.bundle_sha256}`))) {
-      const license = await bytes(new URL('../static/THIRD_PARTY_LICENSE.txt', manifestURL));
-      await artifact(
-        state.db,
-        `license:${engine.bundle_sha256}`,
-        new TextDecoder().decode(license),
-      );
-    }
-    for (let i = 0; i < decks.length; i++) await freezeDeck(state, decks[i], snapshots[i]);
-    const battle = await put(state.db, 'battle', {
-      name: body.name.trim(),
-      status: 'running',
-      policy: state.seed.policy,
-      ...body,
-      engine,
-      coverage,
-      owner: state.owner,
-      snapshot_ids: snapshots.map((snapshot) => snapshot.id),
-      deck_names: decks.map((deck) => deck.name),
-      updated_at: now(),
-    });
-    state.running = true;
-    const heartbeat = setInterval(
-      () => put(state.db, 'battle', { ...battle, updated_at: now() }).catch(() => {}),
-      10000,
-    );
-    workerCall(state, 'battle', payload)
-      .then(async (result) => {
-        const { frames: _frames, ...summary } = result;
-        const completed = { ...battle, ...summary, updated_at: now() };
-        await artifact(state.db, `battle:${battle.id}`, {
-          battle: completed,
-          input: payload,
-          decks,
-          result,
-        });
-        await put(state.db, 'battle', completed);
-      })
-      .catch(async (error) => {
-        await put(state.db, 'battle', {
-          ...battle,
-          status: 'failed',
-          reason: error.message,
-          updated_at: now(),
-        });
-      })
-      .finally(() => {
-        clearInterval(heartbeat);
-        state.running = false;
+      }
+      for (let i = 0; i < decks.length; i++) await freezeDeck(state, decks[i], snapshots[i]);
+      const battle = await put(state.db, 'battle', {
+        name: body.name.trim(),
+        status: 'running',
+        policy: state.seed.policy,
+        as_of: asOf,
+        deck_ids: body.deck_ids,
+        seed: body.seed,
+        max_actions: body.max_actions,
+        max_turns: body.max_turns,
+        engine,
+        coverage,
+        owner: state.owner,
+        snapshot_ids: snapshots.map((snapshot) => snapshot.id),
+        deck_names: decks.map((deck) => deck.name),
+        updated_at: now(),
       });
-    return battle;
+      state.running = true;
+      const heartbeat = setInterval(
+        () => put(state.db, 'battle', { ...battle, updated_at: now() }).catch(() => {}),
+        10000,
+      );
+      workerCall(state, 'battle', payload)
+        .then(async (result) => {
+          clearInterval(heartbeat);
+          const { frames: _frames, ...summary } = result;
+          const completed = { ...battle, ...summary, updated_at: now() };
+          await artifact(state.db, `battle:${battle.id}`, {
+            battle: completed,
+            input: payload,
+            decks,
+            result,
+          });
+          await put(state.db, 'battle', completed);
+        })
+        .catch(async (error) => {
+          clearInterval(heartbeat);
+          const failed = {
+            ...battle,
+            status: 'failed',
+            reason: `${error.message} Battle was not finalized; no winner is inferred.`,
+            updated_at: now(),
+          };
+          state.failures.set(battle.id, failed);
+          await put(state.db, 'battle', failed).catch(() => {});
+        })
+        .finally(() => {
+          clearInterval(heartbeat);
+          state.running = false;
+          battleBusy = false;
+        });
+      return battle;
+    } catch (error) {
+      battleBusy = false;
+      throw error;
+    }
   }
   if (route[0] === 'battles' && route[1]) {
-    const battle = (await list(state.db, 'battle')).find((record) => record.id === route[1]);
+    const battle =
+      state.failures.get(route[1]) ??
+      (await list(state.db, 'battle')).find((record) => record.id === route[1]);
     if (!battle) throw new Error('Battle not found.');
     if (route[2] === 'replay') {
       const full = await artifact(state.db, `battle:${battle.id}`);
@@ -514,7 +571,12 @@ export async function staticDownload(path) {
         add(`card-snapshot-${i + 1}.json`, await snapshotFor(state, full.decks[i].snapshot_id));
       }
       add('engine-manifest.json', full.battle.engine);
-      add('policy.json', full.battle.policy);
+      add(
+        'policy.json',
+        typeof full.battle.policy === 'object' && full.battle.policy !== null
+          ? full.battle.policy
+          : full.decks[0].policy,
+      );
       files['engine.cjs'] = await artifact(state.db, `bundle:${full.battle.engine.bundle_sha256}`);
       if (!files['engine.cjs'])
         throw new Error('The frozen executable is missing; refusing a metadata-only download.');

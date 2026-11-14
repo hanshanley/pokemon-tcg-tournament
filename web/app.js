@@ -401,7 +401,10 @@ async function battleModal() {
                   deck.battle_coverage?.cards
                     .filter((card) => card.status === 'blocked')
                     .map((card) => `${card.name}: ${card.errors.join(' ')}`)
-                    .join(' | ') || deck.current_validation.status
+                    .join(' | ') ||
+                  (deck.current_validation.status !== 'ready'
+                    ? deck.current_validation.status
+                    : (deck.battle_coverage?.message ?? 'Executable coverage is unavailable.'))
                 }`,
             )
             .join('\n');

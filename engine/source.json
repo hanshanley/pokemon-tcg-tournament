@@ -10,6 +10,7 @@
     "engine/worker.js",
     "engine/browser-worker.js",
     "engine/coverage.js",
+    "web/random.js",
     "scripts/build-engine.js"
   ]
 }

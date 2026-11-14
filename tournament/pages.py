@@ -59,6 +59,15 @@ def export_site(directory, output, refresh=False):
         (static / "config.js").write_text("globalThis.FIELDNOTES_STATIC = true;\n")
         (output / ".nojekyll").touch()
         subprocess.run(["node", "scripts/build-pages.js", str(output)], cwd=ROOT, check=True)
+        application_hash = hashlib.sha256((static / "app.js").read_bytes()).hexdigest()
+        html = (output / "index.html").read_text()
+        for filename in ("app.js", "style.css"):
+            path = static / filename
+            fingerprint = hashlib.sha256(path.read_bytes()).hexdigest()
+            versioned = f"{path.stem}-{fingerprint[:16]}{path.suffix}"
+            path.replace(static / versioned)
+            html = html.replace(f"./static/{filename}", f"./static/{versioned}")
+        (output / "index.html").write_text(html)
         license_text = (ROOT / "engine/THIRD_PARTY_LICENSE.txt").read_text()
         for package in ("@progress/pako-esm", "fflate"):
             license_file = ROOT / "node_modules" / package / "LICENSE"
@@ -78,7 +87,7 @@ def export_site(directory, output, refresh=False):
         site = {
             "built_at": now(),
             "engine": build,
-            "application_sha256": hashlib.sha256((static / "app.js").read_bytes()).hexdigest(),
+            "application_sha256": application_hash,
             "catalog": asset("catalog", encoded(snapshot)),
             "records": asset(
                 "records",

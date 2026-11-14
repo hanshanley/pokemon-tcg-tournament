@@ -5,6 +5,49 @@ export const canonical = (value) =>
     .replace(/\s+/g, ' ')
     .trim();
 const nameKey = (value) => canonical(value).toLowerCase();
+const enumKey = (value) => {
+  const key = nameKey(value)
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^a-z0-9]/g, '');
+  return key === 'dark' ? 'darkness' : key;
+};
+const valuesKey = (values) => JSON.stringify((values ?? []).map(enumKey).sort());
+
+export function mechanicalErrors(card, candidate) {
+  const errors = [];
+  if (enumKey(card.supertype) !== enumKey(candidate.category))
+    errors.push('Source and executable card categories differ.');
+  if (card.supertype === 'Pokémon') {
+    if (valuesKey(card.types) !== valuesKey(candidate.types))
+      errors.push('Source and executable Pokémon types differ.');
+    const stage = card.subtypes?.find((value) => ['Basic', 'Stage 1', 'Stage 2'].includes(value));
+    if (stage && enumKey(stage) !== enumKey(candidate.stage))
+      errors.push('Source and executable evolution stages differ.');
+    for (const [index, attack] of (card.attacks ?? []).entries()) {
+      const implemented = candidate.attacks[index];
+      if (!implemented) continue;
+      if (valuesKey(attack.cost) !== valuesKey(implemented.cost))
+        errors.push(`Source and executable attack costs differ (${attack.name}).`);
+      const fixed = String(attack.damage ?? '');
+      if (/^\d+$/.test(fixed) && Number(fixed) !== implemented.damage)
+        errors.push(`Source and executable fixed attack damage differ (${attack.name}).`);
+    }
+  }
+  if (card.supertype === 'Trainer') {
+    const expected = card.subtypes?.includes('Pokémon Tool')
+      ? 'tool'
+      : card.subtypes?.find((value) => ['Item', 'Supporter', 'Stadium'].includes(value));
+    if (expected && enumKey(expected) !== enumKey(candidate.trainer_type))
+      errors.push('Source and executable Trainer categories differ.');
+  }
+  if (card.supertype === 'Energy') {
+    const expected = card.subtypes?.find((value) => ['Basic', 'Special'].includes(value));
+    if (expected && enumKey(expected) !== enumKey(candidate.energy_type))
+      errors.push('Source and executable Energy categories differ.');
+  }
+  return errors;
+}
 export const energyTypes = [
   'Grass',
   'Fire',
@@ -52,7 +95,7 @@ export function deckCoverage(deck, snapshot, catalog, engine) {
     if (!candidate)
       errors.push(`${candidates.length} exact engine printings; no name-only substitution.`);
     else {
-      errors.push(...candidate.blockers);
+      errors.push(...candidate.blockers, ...mechanicalErrors(card, candidate));
       if (card.supertype === 'Pokémon') {
         if (String(candidate.hp) !== String(card.hp))
           errors.push('Source and executable HP differ.');

@@ -1,0 +1,27 @@
+{
+  "card": {
+    "supertype": "Pokémon",
+    "types": ["Darkness"],
+    "subtypes": ["Basic"],
+    "attacks": [{ "name": "Hit", "cost": ["Darkness", "Colorless"], "damage": "30" }]
+  },
+  "implementation": {
+    "category": "POKEMON",
+    "types": ["DARK"],
+    "stage": "BASIC",
+    "attacks": [{ "name": "Hit", "cost": ["COLORLESS", "DARK"], "damage": 30 }]
+  },
+  "mismatches": [
+    { "change": { "category": "TRAINER" }, "error": "card categories" },
+    { "change": { "types": ["FIRE"] }, "error": "Pokémon types" },
+    { "change": { "stage": "STAGE_1" }, "error": "evolution stages" },
+    {
+      "change": { "attacks": [{ "name": "Hit", "cost": ["DARK"], "damage": 30 }] },
+      "error": "attack costs"
+    },
+    {
+      "change": { "attacks": [{ "name": "Hit", "cost": ["DARK", "COLORLESS"], "damage": 40 }] },
+      "error": "fixed attack damage"
+    }
+  ]
+}

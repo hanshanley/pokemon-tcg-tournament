@@ -51,8 +51,10 @@ The bridge sets current first-player Supporter/attack restrictions and validates
 choices. Its tracked build patch fixes upstream lexicographic sorting of numeric shuffle
 permutations; the original source pin plus bridge and bundle hashes identify this deviation.
 
-Legality and execution coverage are separate. Exact set/number/name mapping, HP, attack and
-ability lists, handler presence, and unfinished-source checks screen each deck. No name-only
+Legality and execution coverage are separate. Exact set/number/name mapping, card category,
+Pokémon type/stage/HP, attack costs and fixed printed damage, Trainer/Energy categories, attack
+and ability lists, handler presence, and unfinished-source checks screen each deck. Dynamic
+damage expressions are not reduced to guessed fixed values. No name-only
 substitution or silent rules correction is used. Mapping is **not proof of rules accuracy**.
 In the November 14 snapshot, two of eight Gdańsk lists pass this screening; the other six expose
 their missing or mismatched implementations instead of becoming pretend games.
@@ -62,7 +64,8 @@ The engine executes actual effects, prompts, attacks, damage, weaknesses/resista
 knockouts, prize-taking, turn transitions, and natural game endings. Replay every accepted
 action and both boards, including hidden zones. The upstream SimpleTactics baseline is weak,
 not a competitive opponent or a justified estimate of real-world metagame win rates.
-Game randomness and policy planning use separate seeded Mulberry32 streams; actual game
+Game randomness and policy planning use separate seeded, explicitly 32-bit-wrapped Mulberry32
+streams (v2); actual game
 shuffles use Fisher-Yates. Wall-clock log timestamps are omitted for deterministic replays.
 Limits, worker failures, unsupported prompts, and interrupted tabs never imply a winner.
 The upstream sudden-death implementation is explicitly blocked: the 2026 simultaneous-win
@@ -72,6 +75,18 @@ Battle ZIPs include every frame/action/log, the exact engine input, both deck te
 frozen card catalogs, policy, source/build hashes, dependency license, and the actual standalone
 `engine.cjs` used. Reproduce offline with Node 22+: `node engine.cjs < input.json`.
 Browser and Node full-match traces are compared in the Pages integration test.
+
+The November 14 audit repaired mutable historical replay conditions/markers, overwritten
+legality policies in battle downloads, and long-run RNG precision loss. New setup experiments
+use `browser-fisher-yates-mulberry32-v2`; older saved artifacts are not rewritten. Legacy battle
+downloads recover the deck-frozen policy instead of substituting today's policy.
+Duplicate starts are reserved before asynchronous preparation. Web Locks identify live tab
+owners without inheriting a cloned tab's session identifier; browsers without Web Locks use
+the heartbeat timeout fallback. Worker fetches and execution have bounded waits, failed coverage
+can be retried without disabling setup research, and storage failures do not imply a winner.
+Content-hashed frontend filenames prevent reuse of stale JavaScript/CSS at the same asset URL.
+CI imports two fixed, attributed real Gdańsk reference lists into an isolated test notebook,
+so changing the latest public event does not remove the full-match/offline-reproduction test.
 
 ## Run locally
 

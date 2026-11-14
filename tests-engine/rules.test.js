@@ -209,6 +209,7 @@ test('exact printing coverage rejects missing, unfinished, and mismatched implem
   const snapshot = { sets: [{ id: 's', ptcgoCode: 'TST' }], cards: [card] };
   const deck = { lines: [{ card_id: card.id, count: 60 }], resolution_errors: [] };
   const mapped = {
+    category: 'POKEMON',
     name: 'Example',
     set: 'TST',
     number: '1',

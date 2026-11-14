@@ -1,4 +1,6 @@
 import * as sets from '@engine/sets/index.ts';
+import { randomGenerator } from '../web/random.js';
+export { randomGenerator } from '../web/random.js';
 import { CardManager } from '@engine/game/cards/card-manager.ts';
 import { Card } from '@engine/game/store/card/card.ts';
 import { Player } from '@engine/game/store/state/player.ts';
@@ -113,17 +115,6 @@ export function engineCard(set, number, name) {
   return manager.getCardByName(matches[0].fullName);
 }
 
-export function randomGenerator(seed) {
-  let state = seed >>> 0;
-  return () => {
-    state += 0x6d2b79f5;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 export function withRandom(random, operation) {
   const previous = Math.random;
   Math.random = random;
@@ -154,9 +145,9 @@ function slotView(slot) {
     damage: slot.damage,
     cards: slot.cards.map(cardName),
     tools: slot.tools.map(cardName),
-    conditions: slot.specialConditions,
+    conditions: [...slot.specialConditions],
     energy: slot.energies.cards.map(cardName),
-    marker: slot.marker.markers,
+    marker: encode(slot.marker.markers),
   };
 }
 
@@ -177,6 +168,7 @@ export function viewState(state) {
       discard: player.discard.cards.map(cardName),
       lost_zone: player.lostzone.cards.map(cardName),
       stadium: player.stadium.cards.map(cardName),
+      supporter: player.supporter.cards.map(cardName),
     })),
     prompts: state.prompts
       .filter((prompt) => prompt.result === undefined)
@@ -355,9 +347,9 @@ export function runBattle(input) {
     steps: frames.length,
     frames,
     final_state: viewState(store.state),
-    policy: 'upstream-simple-tactics-v1',
+    agent_policy: 'upstream-simple-tactics-v1',
     randomness:
-      'mulberry32-v1; independent actual-game and policy streams; Fisher-Yates game shuffles',
+      'mulberry32-v2 (32-bit wrapped); independent actual-game and policy streams; Fisher-Yates game shuffles',
     perspective: 'omniscient research replay; both hands and deck orders are visible',
     log_clock: 'Wall-clock log timestamps omitted; replay steps preserve ordering.',
   };

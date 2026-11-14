@@ -302,7 +302,7 @@ export function setupExperiment(deck, snapshot, targets, trials, seed, minimum) 
     unconditional += combination(targetCount, n) * combination(60 - targetCount, 7 - n);
   return {
     kind: 'opening-hand-and-prizes',
-    algorithm_version: 'browser-fisher-yates-mulberry32-v1',
+    algorithm_version: 'browser-fisher-yates-mulberry32-v2',
     python_version: 'Browser JavaScript (different sampling algorithm)',
     created_at: new Date().toISOString(),
     trials,

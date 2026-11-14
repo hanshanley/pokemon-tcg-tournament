@@ -210,7 +210,10 @@ def create_app(data_dir=None):
             archive.writestr("battle.json", json.dumps(full))
             archive.writestr("input.json", json.dumps(full["input"]))
             archive.writestr("engine-manifest.json", json.dumps(result["engine"]))
-            archive.writestr("policy.json", json.dumps(result["policy"]))
+            policy = result["policy"]
+            if not isinstance(policy, dict):
+                policy = full["decks"][0]["policy"]
+            archive.writestr("policy.json", json.dumps(policy))
             for i, deck in enumerate(full["decks"]):
                 archive.writestr(f"deck-{i + 1}.txt", deck["text"])
                 archive.writestr(
