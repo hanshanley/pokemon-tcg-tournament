@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#244b3e" />
+    <meta
+      name="description"
+      content="A local research lab for dated Pokémon Standard legality, real tournament decks, and reproducible opening-hand experiments."
+    />
+    <title>Fieldnotes · Pokémon Tournament Lab</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#/cards"
+          ><span class="brand-mark">f.</span
+          ><span>fieldnotes<small>POKÉMON TOURNAMENT LAB</small></span></a
+        >
+        <div class="workspace">
+          <span class="workspace-icon">S</span>
+          <div>Standard research<small>US / international · English</small></div>
+        </div>
+        <span class="nav-caption">WORKSPACE</span>
+        <nav aria-label="Main navigation">
+          <a href="#/cards" data-nav="cards" aria-label="Card explorer"
+            ><span class="nav-icon">▤</span><span>Card explorer</span></a
+          >
+          <a href="#/decks" data-nav="decks" aria-label="Tournament decks"
+            ><span class="nav-icon">▱</span><span>Tournament decks</span></a
+          >
+          <a href="#/experiments" data-nav="experiments" aria-label="Experiments"
+            ><span class="nav-icon">⌁</span><span>Experiments</span></a
+          >
+          <a href="#/sources" data-nav="sources" aria-label="Sources and policy"
+            ><span class="nav-icon">◈</span><span>Sources & policy</span></a
+          >
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="format-card">
+            <span class="eyebrow">REVIEWED REGULATION MARKS</span>
+            <div class="marks"><span>H</span><span>I</span><span>J</span></div>
+            <p>Legality is a date, not just a letter.</p>
+          </div>
+          <a class="related" href="http://127.0.0.1:8000" target="_blank" rel="noreferrer"
+            >Counterplay battle studio <span>↗</span></a
+          >
+          <div class="local-note"><span class="dot"></span>Local data. Inspectable evidence.</div>
+        </div>
+      </aside>
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="breadcrumb">
+            Research workspace <span>/</span><strong id="breadcrumb">Card explorer</strong>
+          </div>
+          <div class="top-right">
+            <span class="local-chip"><span class="dot"></span>Local-first</span
+            ><label class="date-label" for="as-of"
+              >As of <input id="as-of" type="date" aria-label="Legality date"
+            /></label>
+          </div>
+        </header>
+        <main>
+          <div id="alerts" aria-live="polite"></div>
+          <div id="job-status" aria-live="polite"></div>
+          <div id="content">
+            <section class="empty">
+              <span class="empty-symbol">f.</span>
+              <h2>Opening your research workspace…</h2>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+    <dialog id="dialog"></dialog>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
