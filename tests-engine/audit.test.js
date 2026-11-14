@@ -39,9 +39,36 @@ test('mechanical coverage normalizes enum aliases and rejects meaningful discrep
   );
 });
 
-const { viewState, createStore, engineCard, rules, randomGenerator } = createRequire(
+const { viewState, createStore, engineCard, rules, randomGenerator, runBattle } = createRequire(
   import.meta.url,
 )('../data/engine/worker.cjs');
+
+test('two-player replays with Pokémon promotions are independent of wall-clock pile IDs', () => {
+  const cards = [
+    ...Array(4).fill(engineCard('SCR', '57').fullName),
+    ...Array(56).fill(engineCard('SVE', '5').fullName),
+  ];
+  const input = {
+    seed: 7,
+    max_actions: 1200,
+    max_turns: 200,
+    decks: [
+      { name: 'Player 1', cards },
+      { name: 'Player 2', cards },
+    ],
+  };
+  const original = Date.now;
+  try {
+    Date.now = () => 1000;
+    const first = runBattle(input);
+    Date.now = () => 2000;
+    const second = runBattle(input);
+    assert.ok(first.frames.some((frame) => frame.action.prompt === 'ChoosePokemonPrompt'));
+    assert.deepEqual(second, first);
+  } finally {
+    Date.now = original;
+  }
+});
 
 test('recorded board states cannot change when live effects or conditions change', () => {
   const store = createStore();

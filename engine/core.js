@@ -186,7 +186,11 @@ function encode(value) {
   if (value === null || typeof value !== 'object') return value;
   if (value.fullName) return { full_name: value.fullName, id: value.id };
   if (Array.isArray(value)) return value.map(encode);
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encode(item)]));
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== '__uniqueId')
+      .map(([key, item]) => [key, encode(item)]),
+  );
 }
 
 function actionView(action, state) {
