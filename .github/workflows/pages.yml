@@ -52,7 +52,7 @@ jobs:
           path: test-results
 
   deploy:
-    if: vars.PAGES_ENABLED == 'true'
+    if: vars.PAGES_ENABLED == 'true' && vars.PAGES_DOMAIN == 'themarginoferror.com'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -62,6 +62,16 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Require an explicitly approved publication domain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          HOST="$(gh api "repos/$REPOSITORY/pages" --jq '.html_url | split("/")[2] | ascii_downcase')"
+          case "$HOST" in
+            themarginoferror.com|*.themarginoferror.com) ;;
+            *) echo "::error::Pages publication is not allowed on this hostname."; exit 1 ;;
+          esac
       - uses: actions/configure-pages@v5
       - uses: actions/deploy-pages@v5
         id: deployment

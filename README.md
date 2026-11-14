@@ -33,8 +33,13 @@ discarding the private notebook. Application/engine upgrades request a reload in
 replacing a running executable. Successful builds record public verification metadata at
 most weekly, keeping this scheduled repository active without six-hourly commit noise.
 
-The repository is public and GitHub Pages Actions hosting is enabled with
-`PAGES_ENABLED=true`. Successful workflows automatically deploy the verified site.
+The repository is public, but Pages hosting is currently unpublished and
+`PAGES_ENABLED=false`. Automatic refreshes, verification, and downloadable build artifacts
+continue without attaching the project to a website or adding navigation links.
+Future publication requires explicit enablement, `PAGES_DOMAIN=themarginoferror.com`,
+and a configured Pages hostname on that domain or one of its subdomains. The deployment
+guard rejects inherited personal-site hostnames. No custom domain or DNS is configured
+for this project yet.
 
 To build or preview the same site locally:
 
