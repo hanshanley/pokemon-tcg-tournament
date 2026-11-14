@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 
+from tournament.battles import Battles
 from tournament.decks import validate_deck
 from tournament.experiments import run_experiment
 from tournament.policy import POLICY
@@ -48,6 +49,15 @@ class ExperimentInput(BaseModel):
     as_of: date = Field(default_factory=date.today)
 
 
+class BattleInput(BaseModel):
+    name: Name
+    deck_ids: list[str] = Field(min_length=2, max_length=2)
+    seed: int = Field(default=42, ge=0, le=2**31 - 1)
+    max_actions: int = Field(default=1200, ge=2, le=5000)
+    max_turns: int = Field(default=200, ge=1, le=500)
+    as_of: date = Field(default_factory=date.today)
+
+
 def create_app(data_dir=None):
     @asynccontextmanager
     async def lifespan(app):
@@ -55,7 +65,9 @@ def create_app(data_dir=None):
             Path(data_dir or os.environ.get("TOURNAMENT_DATA_DIR", ROOT / "data"))
         )
         app.state.service = Service(app.state.store)
+        app.state.battles = Battles(app.state.store, app.state.service)
         yield
+        app.state.battles.close()
         app.state.service.close()
 
     app = FastAPI(title="Pokemon TCG Tournament Lab", lifespan=lifespan)
@@ -88,6 +100,8 @@ def create_app(data_dir=None):
             "events": app.state.store.list("event"),
             "experiments": app.state.store.list("experiment"),
             "jobs": app.state.store.list("job")[:20],
+            "battles": app.state.store.list("battle"),
+            "engine": app.state.battles.engine.status(),
         }
 
     @app.post("/api/sync", status_code=202)
@@ -159,7 +173,65 @@ def create_app(data_dir=None):
             "card_details": [
                 {**line, "card": raw_map[line["card_id"]]} for line in result["lines"]
             ],
+            "battle_coverage": app.state.battles.engine.coverage(result, snapshot),
         }
+
+    @app.post("/api/battles", status_code=202)
+    def battle(body: BattleInput):
+        return app.state.battles.start(
+            body.name, body.deck_ids, body.as_of, body.seed, body.max_actions, body.max_turns
+        )
+
+    @app.get("/api/battles/{battle_id}")
+    def get_battle(battle_id: str):
+        result = app.state.store.get("battle", battle_id)
+        if result is None:
+            raise HTTPException(404, "Battle not found")
+        return result
+
+    @app.get("/api/battles/{battle_id}/replay")
+    def replay(battle_id: str):
+        result = get_battle(battle_id)
+        if result["status"] in ("queued", "running", "interrupted"):
+            raise HTTPException(409, "Replay has not been saved.")
+        if not (app.state.store.directory / "battles" / f"{battle_id}.json.gz").exists():
+            raise HTTPException(409, "No replay artifact available.")
+        full = app.state.store.artifact("battles", battle_id)
+        return full["result"]
+
+    @app.get("/api/battles/{battle_id}/download")
+    def download_battle(battle_id: str):
+        result = get_battle(battle_id)
+        if not (app.state.store.directory / "battles" / f"{battle_id}.json.gz").exists():
+            raise HTTPException(409, "No completed research artifact available.")
+        full = app.state.store.artifact("battles", battle_id)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("battle.json", json.dumps(full))
+            archive.writestr("input.json", json.dumps(full["input"]))
+            archive.writestr("engine-manifest.json", json.dumps(result["engine"]))
+            archive.writestr("policy.json", json.dumps(result["policy"]))
+            for i, deck in enumerate(full["decks"]):
+                archive.writestr(f"deck-{i + 1}.txt", deck["text"])
+                archive.writestr(
+                    f"card-snapshot-{i + 1}.json",
+                    json.dumps(app.state.service.snapshot(deck["snapshot_id"])),
+                )
+            archive.write(
+                app.state.battles.engine.bundle(result["engine"]["bundle_sha256"]), "engine.cjs"
+            )
+            archive.write(ROOT / "engine/THIRD_PARTY_LICENSE.txt", "THIRD_PARTY_LICENSE.txt")
+            archive.writestr(
+                "README.txt",
+                "Full omniscient replay, frozen sources and executable.\n"
+                "Rerun offline: node engine.cjs < input.json\n"
+                "Experimental community rules; no winner is inferred from incomplete games.\n",
+            )
+        return Response(
+            buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="battle-{battle_id}.zip"'},
+        )
 
     @app.post("/api/experiments", status_code=201)
     def experiment(body: ExperimentInput):

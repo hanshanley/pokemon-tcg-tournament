@@ -9,7 +9,7 @@
       content="A local research lab for dated Pokémon Standard legality, real tournament decks, and reproducible opening-hand experiments."
     />
     <title>Fieldnotes · Pokémon Tournament Lab</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="./static/style.css" />
   </head>
   <body>
     <div class="shell">
@@ -33,6 +33,9 @@
           <a href="#/experiments" data-nav="experiments" aria-label="Experiments"
             ><span class="nav-icon">⌁</span><span>Experiments</span></a
           >
+          <a href="#/battles" data-nav="battles" aria-label="Battles"
+            ><span class="nav-icon">◇</span><span>Battles</span></a
+          >
           <a href="#/sources" data-nav="sources" aria-label="Sources and policy"
             ><span class="nav-icon">◈</span><span>Sources & policy</span></a
           >
@@ -43,7 +46,11 @@
             <div class="marks"><span>H</span><span>I</span><span>J</span></div>
             <p>Legality is a date, not just a letter.</p>
           </div>
-          <a class="related" href="http://127.0.0.1:8000" target="_blank" rel="noreferrer"
+          <a
+            class="related"
+            href="https://github.com/hanshanley/tcg-simulator"
+            target="_blank"
+            rel="noreferrer"
             >Counterplay battle studio <span>↗</span></a
           >
           <div class="local-note"><span class="dot"></span>Local data. Inspectable evidence.</div>
@@ -74,6 +81,7 @@
       </div>
     </div>
     <dialog id="dialog"></dialog>
-    <script type="module" src="/static/app.js"></script>
+    <script src="./static/config.js"></script>
+    <script type="module" src="./static/app.js"></script>
   </body>
 </html>

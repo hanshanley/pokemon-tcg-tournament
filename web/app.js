@@ -34,6 +34,10 @@ const button = (label, action, style = 'primary', extra = '') =>
   `<button class="button ${style}" data-action="${action}" ${extra}>${label}</button>`;
 
 async function api(path, body) {
+  if (globalThis.FIELDNOTES_STATIC) {
+    const { staticAPI } = await import('./static-client.js');
+    return staticAPI(path, body);
+  }
   const response = await fetch(
     `/api${path}`,
     body === undefined
@@ -92,9 +96,12 @@ async function refresh(render = true) {
   else {
     const wasActive = previous?.jobs?.some((job) => ['running', 'queued'].includes(job.status));
     const active = state.overview.jobs.some((job) => ['running', 'queued'].includes(job.status));
-    if (wasActive && !active) {
+    const battlesChanged =
+      JSON.stringify(previous?.battles?.map(({ id, status }) => [id, status])) !==
+      JSON.stringify(state.overview.battles?.map(({ id, status }) => [id, status]));
+    if ((wasActive && !active) || battlesChanged) {
       const recent = state.overview.jobs[0];
-      if (recent.status === 'failed' || recent.result?.failures?.length) alert(recent.message);
+      if (recent?.status === 'failed' || recent?.result?.failures?.length) alert(recent.message);
       await renderRoute();
     }
   }
@@ -111,13 +118,16 @@ async function renderRoute() {
       decks: 'Tournament decks',
       experiments: 'Experiments',
       sources: 'Sources & policy',
+      battles: 'Battles',
     }[section] ?? 'Workspace';
   if (section === 'cards' && id) return renderCard(id);
   if (section === 'decks' && id) return renderDeck(id);
   if (section === 'experiments' && id) return renderExperiment(id);
+  if (section === 'battles' && id) return renderBattle(id);
   if (section === 'decks') return renderDecks();
   if (section === 'experiments') return renderExperiments();
   if (section === 'sources') return renderSources();
+  if (section === 'battles') return renderBattles();
   await renderCards();
 }
 
@@ -250,6 +260,183 @@ async function renderDeck(id) {
       .join('') +
     `<div class="deck-layout"><section class="panel"><div class="panel-heading"><h3>Resolved printings</h3>${badge(validation.status)}</div><div class="table-wrap"><table><thead><tr><th>Count</th><th>Card</th><th>Printing</th><th>Assessment</th></tr></thead><tbody>${deck.card_details.map((line) => `<tr><td class="mono">${line.count}</td><td><a class="row-title" href="#/cards/${encodeURIComponent(line.card.id)}">${escape(line.card.name)}</a></td><td class="mono">${escape(line.card.set_id)} ${escape(line.card.number)}</td><td>${badge(validation.cards.find((card) => card.card_id === line.card.id)?.status ?? 'review')}</td></tr>`).join('')}</tbody></table></div></section><div><section class="panel padded"><h3>Original import</h3><pre class="deck-text">${escape(deck.text)}</pre></section><section class="panel padded provenance"><h3>Provenance</h3><p>${escape(deck.source.coverage ?? 'Manually supplied exact-printing decklist.')}</p>${deck.source.url ? link(deck.source.url, 'Original tournament list') : ''}<dl class="properties"><div><dt>Event date</dt><dd>${escape(deck.source.event_date ?? 'Manual')}</dd></div><div><dt>Card snapshot</dt><dd><code>${escape(deck.snapshot_id.slice(0, 12))}</code></dd></div><div><dt>Deck fingerprint</dt><dd><code>${escape(deck.sha256.slice(0, 12))}</code></dd></div></dl></section></div></div>` +
     snapshotNote();
+  const coverage = deck.battle_coverage;
+  if (coverage)
+    $('#content').insertAdjacentHTML(
+      'beforeend',
+      `<section class="panel padded"><h3>Executable battle coverage</h3><p>${coverage.ready ? 'All exact printings map to screened executable implementations.' : escape(coverage.engine.available ? 'This deck cannot run until the following coverage gaps are resolved.' : coverage.engine.message)}</p>
+    ${coverage.cards
+      .filter((card) => card.status !== 'mapped')
+      .map(
+        (card) =>
+          `<div class="note"><strong>${escape(card.name)} · ${escape(card.set_code)} ${escape(card.number)}</strong><p>${card.errors.map(escape).join(' ')}</p></div>`,
+      )
+      .join('')}
+    <p class="small-muted">Mapping is not judge certification. Attacks and abilities execute in an experimental community rules engine.</p>
+    ${button('Set up a battle', 'new-battle', 'secondary', coverage.ready ? '' : 'disabled')}</section>`,
+    );
+}
+
+function renderBattles() {
+  const { battles = [], engine } = state.overview;
+  $('#content').innerHTML =
+    header(
+      'EXECUTABLE EFFECTS. INSPECTABLE DECISIONS.',
+      'Battles',
+      'Resolve real attacks, abilities, Trainers, turns, knockouts, and prizes.',
+      button('+ New battle', 'new-battle', 'primary', engine?.available ? '' : 'disabled'),
+    ) +
+    `<div class="notice"><p><strong>Experimental rules, not a competitive win-rate model.</strong> Exact-printing coverage is checked before play. The baseline AI is deliberately simple. Unresolved effects, limits, and the unsupported 2026 simultaneous-win tiebreaker never become invented wins.</p></div>` +
+    (!engine?.available
+      ? `<div class="note">${escape(engine?.message ?? 'Prepare the executable engine first.')}</div>`
+      : '') +
+    (state.overview.deployment
+      ? '<div class="note">Battles run in a browser Web Worker. Keep this tab open until the result is saved. Decks and complete traces stay in this browser; export ZIPs before clearing site storage.</div>'
+      : '') +
+    `<section class="panel"><div class="panel-heading"><h3>Battle notebook <span class="count">${battles.length}</span></h3></div>${
+      battles.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Match</th><th>Status</th><th>Turns / actions</th><th>Result</th><th></th></tr></thead><tbody>${battles
+            .map(
+              (battle) =>
+                `<tr><td><a class="row-title" href="#/battles/${battle.id}">${escape(battle.name)}</a><small>${battle.deck_names.map(escape).join(' vs ')}</small></td><td>${badge(battle.status)}</td><td class="mono">${battle.turns ?? '—'} / ${battle.steps ?? '—'}</td><td>${battle.winner == null ? (battle.draw ? 'Draw' : 'No winner') : `Seat ${battle.winner + 1}`}</td><td><a href="#/battles/${battle.id}" class="row-open" aria-label="Inspect battle">↗</a></td></tr>`,
+            )
+            .join('')}</tbody></table></div>`
+        : empty(
+            'From card text to an actual match.',
+            'Choose two fully mapped, dated legal decks. Every accepted action and resulting board is retained.',
+          )
+    }</section>` +
+    snapshotNote();
+}
+
+async function renderBattle(id) {
+  const battle = await api(`/battles/${id}`);
+  const active = ['queued', 'running'].includes(battle.status);
+  $('#content').innerHTML =
+    `<a class="back" href="#/battles">← Battles</a>` +
+    header(
+      'AN OMNISCIENT RESEARCH REPLAY',
+      escape(battle.name),
+      `Seed ${battle.seed} · ${escape(battle.as_of)} · engine ${short(battle.engine.bundle_sha256)}`,
+      !active && battle.steps
+        ? `<a class="button primary" href="/api/battles/${id}/download">↓ Complete battle</a>`
+        : '',
+    ) +
+    `<div class="metrics three"><article><span>Execution</span><strong class="status-text">${escape(battle.status)}</strong><small>${escape(battle.reason ?? 'The worker is resolving actual card effects.')}</small></article><article><span>Turns / accepted actions</span><strong>${battle.turns ?? '—'} <em>/ ${battle.steps ?? '—'}</em></strong><small>Limit: ${battle.max_turns} turns / ${battle.max_actions} actions</small></article><article><span>Natural result</span><strong class="status-text">${battle.winner == null ? (battle.draw ? 'Draw' : 'No winner') : `Seat ${battle.winner + 1}`}</strong><small>No result is inferred from a limit or failure.</small></article></div>` +
+    (active
+      ? '<section class="panel padded"><div class="job"><span class="spinner"></span>Resolving the battle. Keep this tab open; the notebook updates automatically.</div></section>'
+      : '') +
+    `<div class="note">Both hands, deck orders, and prizes are visible. This is a research replay, not a hidden-information player client. ${battle.deck_names.map(escape).join(' vs ')}</div><div id="replay"></div>`;
+  if (active || !battle.steps) return;
+  const replay = await api(`/battles/${id}/replay`);
+  if (route()[1] !== 'battles' || route()[2] !== id) return;
+  $('#replay').innerHTML =
+    `<section class="panel padded"><label class="replay-control">Replay step <input aria-label="Replay step" type="range" min="0" max="${replay.frames.length - 1}" value="${replay.frames.length - 1}" /></label><p id="replay-caption" class="mono"></p><div id="replay-board" class="battle-board"></div><details><summary>Accepted action and engine logs</summary><pre id="replay-logs" class="deck-text"></pre></details></section>`;
+  const showFrame = (index) => {
+    const frame = replay.frames[index];
+    $('#replay-caption').textContent =
+      `Step ${index + 1} / ${replay.frames.length} · turn ${frame.state.turn} · ${frame.action.type ?? 'setup'} · ${frame.state.phase}`;
+    $('#replay-board').innerHTML = frame.state.players
+      .map(
+        (player, seat) =>
+          `<article class="battle-seat"><span class="eyebrow">SEAT ${seat + 1} ${frame.state.active_player === seat ? '· ACTIVE TURN' : ''}</span><h3>${escape(player.name)}</h3><div class="active-pokemon"><span>ACTIVE POKÉMON</span><h2>${escape(player.active.name ?? 'No active Pokémon')}</h2><p>${Math.max(0, player.active.hp - player.active.damage)} / ${player.active.hp} HP · ${player.active.damage} damage</p><p>${escape(player.active.energy.join(', ') || 'No attached Energy')}</p><small>${escape(player.active.conditions.join(', '))}</small></div><div class="bench">${
+            player.bench
+              .filter((slot) => slot.name)
+              .map(
+                (slot) =>
+                  `<div><strong>${escape(slot.name)}</strong><small>${slot.damage} damage · ${slot.energy.length} Energy</small></div>`,
+              )
+              .join('') || '<p class="small-muted">Empty Bench</p>'
+          }</div><dl class="properties"><div><dt>Deck / hand</dt><dd>${player.deck.length} / ${player.hand.length}</dd></div><div><dt>Prizes remaining</dt><dd>${player.prizes.filter((prize) => prize.length).length}</dd></div><div><dt>Discard / Lost Zone</dt><dd>${player.discard.length} / ${player.lost_zone.length}</dd></div></dl><details><summary>Hidden zones (omniscient)</summary><pre class="deck-text">${escape(JSON.stringify({ hand: player.hand, prizes: player.prizes, deck: player.deck }, null, 2))}</pre></details></article>`,
+      )
+      .join('');
+    $('#replay-logs').textContent = JSON.stringify(
+      { action: frame.action, logs: frame.logs, prompts: frame.state.prompts },
+      null,
+      2,
+    );
+  };
+  $('#replay input').addEventListener('input', (event) => showFrame(Number(event.target.value)));
+  showFrame(replay.frames.length - 1);
+}
+
+async function battleModal() {
+  const decks = state.overview.decks;
+  if (!decks.length) return alert('Import a tournament deck first.');
+  modal(
+    'New executable battle',
+    `<form id="battle-form" class="modal-form"><label>Battle name<input name="name" required maxlength="120" value="Standard research match" /></label>${[0, 1].map((seat) => `<label>Seat ${seat + 1}<select aria-label="Seat ${seat + 1}" name="deck_${seat}">${decks.map((deck) => `<option value="${deck.id}">${escape(deck.name)}</option>`).join('')}</select></label>`).join('')}<div class="form-grid"><label>Random seed<input type="number" name="seed" min="0" max="2147483647" required value="42" /></label><label>Action limit<input type="number" name="max_actions" min="2" max="5000" required value="1200" /></label></div><label>Turn limit<input type="number" name="max_turns" min="1" max="500" required value="200" /></label><div class="note" id="battle-coverage">Checking exact-printing coverage…</div><div class="form-error" role="alert"></div><button class="button primary" disabled>Resolve complete battle →</button></form>`,
+  );
+  const form = $('#battle-form'),
+    submit = form.querySelector('button');
+  const ready = decks.filter((deck) => deck.battle_coverage?.ready);
+  if (ready.length) {
+    form.elements.deck_0.value = ready[0].id;
+    form.elements.deck_1.value = (ready[1] ?? ready[0]).id;
+  }
+  let request = 0;
+  const check = async () => {
+    const current = ++request;
+    submit.disabled = true;
+    $('#battle-coverage').textContent = 'Checking dated legality and exact executable coverage…';
+    try {
+      const reports = await Promise.all(
+        [0, 1].map((seat) =>
+          api(`/decks/${form.elements[`deck_${seat}`].value}?as_of=${state.asOf}`),
+        ),
+      );
+      if (current !== request || !form.isConnected) return;
+      const eligible = reports.every(
+        (deck) => deck.current_validation.status === 'ready' && deck.battle_coverage?.ready,
+      );
+      $('#battle-coverage').textContent = eligible
+        ? 'Both 60-card decks have dated legality and exact screened engine mappings. Experimental baseline AI; no competitive strength claim.'
+        : reports
+            .filter(
+              (deck) => deck.current_validation.status !== 'ready' || !deck.battle_coverage?.ready,
+            )
+            .map(
+              (deck) =>
+                `${deck.name}: ${
+                  deck.battle_coverage?.cards
+                    .filter((card) => card.status === 'blocked')
+                    .map((card) => `${card.name}: ${card.errors.join(' ')}`)
+                    .join(' | ') || deck.current_validation.status
+                }`,
+            )
+            .join('\n');
+      submit.disabled = !eligible;
+    } catch (error) {
+      if (current === request && form.isConnected)
+        form.querySelector('.form-error').textContent = error.message;
+    }
+  };
+  form.querySelectorAll('select').forEach((select) => select.addEventListener('change', check));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    submit.textContent = 'Preparing frozen engine and decks…';
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const battle = await api('/battles', {
+        name: data.name,
+        deck_ids: [data.deck_0, data.deck_1],
+        seed: Number(data.seed),
+        max_actions: Number(data.max_actions),
+        max_turns: Number(data.max_turns),
+        as_of: state.asOf,
+      });
+      $('#dialog').close();
+      await refresh(false);
+      location.hash = `/battles/${battle.id}`;
+    } catch (error) {
+      form.querySelector('.form-error').textContent = error.message;
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Resolve complete battle →';
+    }
+  });
+  await check();
 }
 
 function renderExperiments() {
@@ -412,6 +599,17 @@ async function experimentModal(deckId) {
 }
 
 document.addEventListener('click', async (event) => {
+  const download = event.target.closest('a[href^="/api/"]');
+  if (download && globalThis.FIELDNOTES_STATIC) {
+    event.preventDefault();
+    try {
+      const { staticDownload } = await import('./static-client.js');
+      await staticDownload(download.getAttribute('href'));
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled) return;
   const action = target.dataset.action;
@@ -425,17 +623,18 @@ document.addEventListener('click', async (event) => {
     }
     if (action === 'new-deck') return deckModal();
     if (action === 'new-experiment') return await experimentModal(target.dataset.id);
+    if (action === 'new-battle') return await battleModal();
     if (action === 'prev-cards' || action === 'next-cards') {
       state.page += action === 'next-cards' ? 1 : -1;
       return await loadCards();
     }
     if (action === 'sync' || action === 'sync-events') {
       await api('/sync', { kind: action === 'sync-events' ? 'events' : 'all' });
-      await refresh(false);
+      await refresh();
     }
     if (action === 'import-event') {
       await api(`/events/${target.dataset.id}/import`, { top: 8 });
-      await refresh(false);
+      await refresh();
     }
   } catch (error) {
     alert(error.message);
@@ -458,7 +657,7 @@ window.addEventListener('hashchange', () => renderRoute().catch((error) => alert
 
 async function start() {
   const health = await api('/health');
-  state.asOf = health.today;
+  state.asOf = health.default_as_of ?? health.today;
   $('#as-of').value = state.asOf;
   await refresh();
   setInterval(() => refresh(false).catch((error) => alert(error.message)), 2500);

@@ -5,24 +5,90 @@ Standard cards and real in-person tournament decklists. It is a separate compani
 [Counterplay](https://github.com/hanshanley/tcg-simulator), not an expansion of CABT's
 supported card effects.
 
-The first working milestone provides dated legality assessments, exact-printing deck
-validation, tournament imports, and seeded opening-hand/prize experiments. **It does not
-simulate full games, card effects, or matchup win rates.** There is no Kaggle workflow.
+The workspace provides dated legality assessments, exact-printing deck validation,
+tournament imports, seeded opening-hand/prize experiments, and **executable experimental
+battles** with complete omniscient replays. There is no Kaggle workflow.
+
+## Automatic browser-only GitHub Pages build
+
+The Pages build runs entirely in the browser: no Python service, localhost connection,
+account, or API key is needed. Battles execute in an isolated Web Worker. Manual decks,
+experiments, frozen catalogs, engine executables, and full traces are saved in IndexedDB
+on the user's device, not uploaded to GitHub. Keep the tab open during a battle and export
+complete ZIPs before clearing site storage. Other browsers/devices do not share this notebook.
+
+`.github/workflows/pages.yml` automatically refreshes public cards and latest published
+top-eight lists, verifies the pinned engine archive, builds both executables, runs Python,
+engine, and browser tests, and uploads a complete static site on pushes, manual dispatches,
+and daily at 06:17 UTC. Failed refreshes or tests never deploy over the previous good site.
+The exporter excludes local manual decks, experiments, battle traces, and the SQLite database.
+Fresh source data does **not** extend the reviewed legality policy; the browser defaults to
+the last reviewed date when the current date is beyond that window.
+
+**Deployment is intentionally gated.** GitHub rejected Pages enablement for this private
+repository under the current account plan. Repository visibility has not been changed.
+Once Pages is eligible and enabled with GitHub Actions as its source, set the repository
+Actions variable `PAGES_ENABLED=true` and dispatch the workflow. Until then, verified builds
+remain downloadable as `tournament-pages-preview` Actions artifacts; no live Pages URL is claimed.
+
+To build or preview the same site locally:
+
+```sh
+npm ci
+uv sync --locked
+uv run --locked python -m tournament.pages --refresh
+uv run --locked python -m tests.pages_server
+```
+
+Open `http://127.0.0.1:8005/pokemon-tcg-tournament/`.
+
+## Executable battles
+
+The isolated MIT-licensed Twinleaf/ryuu-play dependency is pinned by source commit and
+archive SHA-256 in `engine/source.json`; attribution is in `engine/THIRD_PARTY_LICENSE.txt`.
+Only source files are downloaded, not artwork, accounts, databases, or upstream web servers.
+The bridge sets current first-player Supporter/attack restrictions and validates AI prompt
+choices. Its tracked build patch fixes upstream lexicographic sorting of numeric shuffle
+permutations; the original source pin plus bridge and bundle hashes identify this deviation.
+
+Legality and execution coverage are separate. Exact set/number/name mapping, HP, attack and
+ability lists, handler presence, and unfinished-source checks screen each deck. No name-only
+substitution or silent rules correction is used. Mapping is **not proof of rules accuracy**.
+In the November 14 snapshot, two of eight Gdańsk lists pass this screening; the other six expose
+their missing or mismatched implementations instead of becoming pretend games.
+
+Open **Battles**, choose two ready decks, set a seed and limits, and resolve the match.
+The engine executes actual effects, prompts, attacks, damage, weaknesses/resistances,
+knockouts, prize-taking, turn transitions, and natural game endings. Replay every accepted
+action and both boards, including hidden zones. The upstream SimpleTactics baseline is weak,
+not a competitive opponent or a justified estimate of real-world metagame win rates.
+Game randomness and policy planning use separate seeded Mulberry32 streams; actual game
+shuffles use Fisher-Yates. Wall-clock log timestamps are omitted for deterministic replays.
+Limits, worker failures, unsupported prompts, and interrupted tabs never imply a winner.
+The upstream sudden-death implementation is explicitly blocked: the 2026 simultaneous-win
+tiebreaker is **not yet supported**.
+
+Battle ZIPs include every frame/action/log, the exact engine input, both deck texts, complete
+frozen card catalogs, policy, source/build hashes, dependency license, and the actual standalone
+`engine.cjs` used. Reproduce offline with Node 22+: `node engine.cjs < input.json`.
+Browser and Node full-match traces are compared in the Pages integration test.
 
 ## Run locally
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/). Executable battles also require Node 22+.
 
 ```sh
 git clone https://github.com/hanshanley/pokemon-tcg-tournament.git
 cd pokemon-tcg-tournament
 uv sync --locked
+npm ci
+uv run --locked python -m tournament engine-sync
 uv run --locked python -m tournament sync
 uv run --locked python -m tournament serve
 ```
 
 Open **http://127.0.0.1:8002**. Counterplay can continue running independently on port 8000.
-The browser interface is served directly: Node and a frontend build are not required.
+The local browser interface is served directly; Node is required for executable battles.
 `--port 8004` selects another port. `TOURNAMENT_DATA_DIR` overrides the default `data/`
 directory, which contains SQLite metadata and compressed immutable artifacts.
 
@@ -121,7 +187,7 @@ Empirical rates include Wilson 95% intervals. The exact initial mulligan probabi
 **unconditioned** target probability are labeled separately; the latter is not the same
 quantity as the valid-opening-hand result.
 
-There are no opponent mulligan bonus cards, setup effects, abilities, search, attacks, or
+In these setup-only experiments there are no opponent mulligan bonus cards, setup effects, abilities, search, attacks, or
 turn-by-turn gameplay. Prizing and availability do not imply that a card can be played,
 that a combo succeeds, or that a deck wins.
 
@@ -139,6 +205,10 @@ The source catalog is also independently downloadable in full. Seeds reproduce s
 with the same algorithm, deck ordering, and Python version. Existing experiment artifacts
 are not recomputed when sources change.
 
+The browser-only setup model uses its separately versioned Fisher-Yates/Mulberry32 algorithm,
+not Python's sampler. A seed is reproducible within its recorded algorithm, not interchangeable
+between the two setup implementations.
+
 ## Validation
 
 ```sh
@@ -149,7 +219,11 @@ uv run --locked pytest
 npm ci
 npx playwright install chromium
 npm run check
+npm run build:engine
+npm run test:engine
 npm run test:e2e
+uv run --locked python -m tournament.pages
+npm run test:pages
 ```
 
 Unit/API tests use synthetic fixtures only. Browser tests start an isolated temporary-data

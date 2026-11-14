@@ -1,0 +1,15 @@
+{
+  "repository": "twinleafgg/twinleafgg",
+  "commit": "c531dc84f6d079e7531a9c3986a2f51ddeecad6c",
+  "archive_sha256": "9d2b06ae6b7e952efbfb20238ce02a9e488bef877f32e5cb623f4272f16dc39c",
+  "license": "MIT",
+  "entry": "ptcg-server/src",
+  "rules_reviewed": "2026-11-14",
+  "bridge_files": [
+    "engine/core.js",
+    "engine/worker.js",
+    "engine/browser-worker.js",
+    "engine/coverage.js",
+    "scripts/build-engine.js"
+  ]
+}

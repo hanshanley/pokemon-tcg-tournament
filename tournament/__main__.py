@@ -4,6 +4,7 @@ from pathlib import Path
 
 import uvicorn
 
+from tournament.battles import prepare_engine
 from tournament.service import Service
 from tournament.sources import sync_cards
 from tournament.store import Store
@@ -11,9 +12,13 @@ from tournament.store import Store
 
 def main():
     parser = argparse.ArgumentParser(description="Pokemon TCG Tournament Lab")
-    parser.add_argument("command", choices=["serve", "sync"])
+    parser.add_argument("command", choices=["serve", "sync", "engine-sync"])
     parser.add_argument("--port", type=int, default=8002)
     args = parser.parse_args()
+    if args.command == "engine-sync":
+        root = Path(__file__).resolve().parents[1]
+        prepare_engine(Path(os.environ.get("TOURNAMENT_DATA_DIR", root / "data")))
+        return
     if args.command == "serve":
         uvicorn.run("tournament.app:app", host="127.0.0.1", port=args.port)
     else:

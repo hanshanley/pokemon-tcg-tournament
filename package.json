@@ -4,11 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "eslint web tests-browser && prettier --check web tests-browser *.js *.json",
-    "format": "prettier --write web tests-browser *.js *.json",
+    "build:pages": "python -m tournament.pages",
+    "test:engine": "node --test tests-engine/*.test.js",
+    "build:engine": "node scripts/build-engine.js",
+    "check": "eslint web engine scripts tests-browser tests-pages tests-engine && prettier --check web engine scripts tests-browser tests-pages tests-engine *.js *.json .github",
+    "format": "prettier --write web engine scripts tests-browser tests-pages tests-engine *.js *.json .github",
+    "test:pages": "playwright test --config playwright.pages.config.js",
     "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "fflate": "0.8.3",
+    "@progress/pako-esm": "1.0.1",
+    "esbuild": "0.28.2",
     "@eslint/js": "^9.0.0",
     "@playwright/test": "^1.56.0",
     "eslint": "^9.0.0",
