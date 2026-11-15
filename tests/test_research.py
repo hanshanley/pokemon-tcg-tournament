@@ -6,12 +6,13 @@ import tarfile
 import time
 import zipfile
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.browser_server import browser_snapshot
 from tests.sample_data import DECK_TEXT, sample_snapshot
 from tournament.app import create_app
 from tournament.decks import resolve_deck, validate_deck
@@ -54,6 +55,18 @@ def test_second_friday_uses_calendar_not_fourteen_days():
     assert second_friday(date(2026, 11, 6)) == date(2026, 11, 20)
     assert second_friday(date(2026, 9, 16)) == date(2026, 9, 25)
     assert second_friday(date(2026, 11, 7)) == date(2026, 11, 20)
+
+
+@pytest.mark.parametrize("as_of", [date(2026, 11, 15), date(2027, 4, 15)])
+def test_browser_fixture_survives_date_rollover_without_removing_policy_limits(as_of):
+    snapshot = browser_snapshot(as_of)
+    deck = resolve_deck(DECK_TEXT, snapshot)
+    assert validate_deck(deck, snapshot, as_of)["status"] == "ready"
+    assert validate_deck(deck, snapshot, as_of + timedelta(days=1))["status"] == "ready"
+    assert all(
+        Legality(snapshot, as_of + timedelta(days=2)).check(card)["status"] == "review"
+        for card in snapshot["cards"]
+    )
 
 
 def test_release_waiting_period_and_ascended_override(snapshot):

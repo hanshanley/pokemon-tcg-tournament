@@ -27,7 +27,10 @@ test('inspect exact printings and run a complete reproducible experiment', async
   expect(errors).toEqual([]);
 });
 
-test('mobile navigation, policy dates, and strict imports remain usable', async ({ page }) => {
+test('mobile navigation, policy dates, and strict imports remain usable', async ({
+  page,
+  request,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await expect(page.getByLabel('Search cards')).toBeVisible();
@@ -42,7 +45,10 @@ test('mobile navigation, policy dates, and strict imports remain usable', async 
   await expect(page.getByRole('button', { name: 'Run consistency experiment' })).toBeDisabled();
   await page.getByRole('link', { name: 'Sources and policy', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Conservative by design.' })).toBeVisible();
-  await page.getByLabel('Legality date').fill('2027-04-15');
+  const { policy } = await (await request.get('/api/health')).json();
+  const outside = new Date(`${policy.reviewed_through}T00:00:00Z`);
+  outside.setUTCDate(outside.getUTCDate() + 1);
+  await page.getByLabel('Legality date').fill(outside.toISOString().slice(0, 10));
   await page.getByRole('link', { name: 'Card explorer', exact: true }).click();
   await expect(page.getByText('No printings match those filters.', { exact: true })).toBeVisible();
 });
@@ -57,7 +63,7 @@ test('changing decks while targets load cannot restore stale target printings', 
     data: {
       name: 'Second fixture deck',
       text: '2 Research Basic TST 1\n4 Research Draw TST 2\n54 Fire Energy TST 3',
-      as_of: '2026-11-14',
+      as_of: overview.today,
     },
   });
   const second = await created.json();
