@@ -1,10 +1,10 @@
 {
-  "recorded_at": "2026-11-14T22:16:39.117Z",
+  "recorded_at": "2026-11-22T06:44:38.799Z",
   "source_commit": "90f27d0e14cefe48ccb2b8922a7a356b2fcf0072",
   "card_count": 20792,
   "policy_id": "international-standard-live-hij",
   "legal_marks": "H I J",
-  "verified_at": "2026-11-14T22:14:35.709799+00:00",
-  "valid_until": "2026-11-16T04:14:35.709799+00:00",
+  "verified_at": "2026-11-22T06:42:24.414843+00:00",
+  "valid_until": "2026-11-23T12:42:24.414843+00:00",
   "handbook_sha256": "4b21423f8abbe10b508b0c044f06fcba72f78e6460120515ed28c57e0bacf8c7"
 }
